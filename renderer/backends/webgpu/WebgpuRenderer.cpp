@@ -18,6 +18,11 @@
 
 #if defined(__EMSCRIPTEN__)
 #include <emscripten/emscripten.h>
+#elif defined(GFX_USE_DAWN_NATIVE_PROC)
+  // Only needed when using dawn_native/dawn_proc (Xcode generator workaround)
+  // For other generators, webgpu_dawn handles this automatically
+  #include "dawn/native/DawnNative.h"
+  #include "dawn/dawn_proc.h"
 #endif
 #include <webgpu/webgpu_glfw.h>
 
@@ -198,6 +203,17 @@ void CreateEnvironmentTexture(wgpu::Device device, wgpu::TextureViewDimension ty
 
 void WebgpuRenderer::Initialize(GLFWwindow* window, const Environment& environment,
                                 const Model& model, uint32_t width, uint32_t height) {
+#if defined(GFX_USE_DAWN_NATIVE_PROC)
+    // Initialize Dawn proc table before creating WebGPU instance
+    // Only needed when using dawn_native/dawn_proc (Xcode generator workaround)
+    // For other generators, webgpu_dawn handles this automatically
+    static struct DawnProcsInitializer {
+        DawnProcsInitializer() {
+            dawnProcSetProcs(&dawn::native::GetProcs());
+        }
+    } initDawnProcs;
+#endif
+
     // Use synchronous initialization with TimedWaitAny
     static const auto kTimedWaitAny = wgpu::InstanceFeatureName::TimedWaitAny;
     wgpu::InstanceDescriptor instanceDesc{.requiredFeatureCount = 1,

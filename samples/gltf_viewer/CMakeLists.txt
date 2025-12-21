@@ -15,7 +15,6 @@ add_executable(gltf_viewer ${gltf_viewer_sources})
 target_link_libraries(gltf_viewer PRIVATE
   gfx_build_options
   gfx_app_entry
-  gfx_renderer_core
 )
 
 # Link enabled renderer backends.

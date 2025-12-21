@@ -57,6 +57,10 @@ target_link_libraries(gfx_renderer_webgpu PUBLIC
 # Native: Dawn's WebGPU implementation + GLFW for windowing.
 if(EMSCRIPTEN)
   target_link_libraries(gfx_renderer_webgpu PUBLIC emdawnwebgpu_cpp webgpu_glfw)
+elseif(CMAKE_GENERATOR STREQUAL "Xcode")
+  # Xcode generator has issues with dawn::webgpu_dawn; use dawn_native and dawn_proc instead
+  target_link_libraries(gfx_renderer_webgpu PUBLIC dawn_native dawn_proc webgpu_glfw glfw)
+  target_compile_definitions(gfx_renderer_webgpu PRIVATE GFX_USE_DAWN_NATIVE_PROC=1)
 else()
   target_link_libraries(gfx_renderer_webgpu PUBLIC dawn::webgpu_dawn webgpu_glfw glfw)
 endif()
