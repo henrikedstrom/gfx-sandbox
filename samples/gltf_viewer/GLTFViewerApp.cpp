@@ -1,25 +1,24 @@
+// Class Header
+#include "GLTFViewerApp.h"
+
 // Standard Library Headers
 #include <algorithm>
 #include <cctype>
 #include <iostream>
+#include <string_view>
 
 // Third-Party Library Headers
 #include <GLFW/glfw3.h>
 
 // Project Headers
-#include "GLTFViewerApp.h"
+#include "BackendRegistry.h"
 #include "application/Camera.h"
 #include "application/OrbitControls.h"
 
-#if defined(GFX_SELECTED_BACKEND_WEBGPU)
-#include "renderer/backends/webgpu/WebgpuRenderer.h"
-#elif defined(GFX_SELECTED_BACKEND_VULKAN)
-#include "renderer/backends/vulkan/VulkanRenderer.h"
-#else
-#error "No backend selected. This should be set by CMake (GFX_SELECTED_BACKEND_*)"
-#endif
-
 namespace {
+
+constexpr uint32_t kDefaultWidth = 800;
+constexpr uint32_t kDefaultHeight = 600;
 
 void RepositionCamera(Camera& camera, const Model& model) {
     glm::vec3 minBounds{}, maxBounds{};
@@ -30,12 +29,26 @@ void RepositionCamera(Camera& camera, const Model& model) {
 } // namespace
 
 // App factory used by the shared entrypoint in `gfx_app_entry` (AppEntryMain.cpp).
-std::unique_ptr<Application> CreateApplication(uint32_t width, uint32_t height) {
-    return std::make_unique<GltfViewerApp>(width, height);
+std::unique_ptr<Application> CreateApplication(int argc, char** argv) {
+    return std::make_unique<GltfViewerApp>(argc, argv);
 }
 
-GltfViewerApp::GltfViewerApp(uint32_t width, uint32_t height) :
-    Application(width, height, "gltf_viewer") {}
+std::string GltfViewerApp::ParseBackendArg(int argc, char** argv) {
+    for (int i = 1; i < argc; ++i) {
+        std::string_view arg{argv[i]};
+        if (arg.starts_with("--backend=")) {
+            return std::string(arg.substr(10));
+        }
+        if (arg == "--backend" && i + 1 < argc) {
+            return argv[i + 1];
+        }
+    }
+    return ""; // Use registry default
+}
+
+GltfViewerApp::GltfViewerApp(int argc, char** argv) :
+    Application(kDefaultWidth, kDefaultHeight, "gltf_viewer"),
+    _backendName(ParseBackendArg(argc, argv)) {}
 
 GltfViewerApp::~GltfViewerApp() = default;
 
@@ -48,16 +61,63 @@ void GltfViewerApp::OnInit() {
     _model.Load("./assets/models/DamagedHelmet.glb");
     RepositionCamera(_camera, _model);
 
-#if defined(GFX_SELECTED_BACKEND_WEBGPU)
-    _renderer = std::make_unique<WebgpuRenderer>();
-#elif defined(GFX_SELECTED_BACKEND_VULKAN)
-    _renderer = std::make_unique<VulkanRenderer>();
-#endif
+    // Create renderer via backend registry
+    _renderer = BackendRegistry::Instance().Create(_backendName);
+    if (!_renderer) {
+        std::cerr << "Failed to create renderer. Exiting." << std::endl;
+        RequestQuit();
+        return;
+    }
 
+    _renderer->Initialize(GetWindow(), _environment, _model, GetWidth(), GetHeight());
+
+    // Store the actual backend name (in case we used the default)
+    if (_backendName.empty()) {
+        _backendName = BackendRegistry::Instance().GetDefaultBackend();
+    }
+}
+
+void GltfViewerApp::SwitchToNextBackend() {
+    // Get available backends and find the next one in the cycle
+    auto backends = BackendRegistry::Instance().GetAvailableBackends();
+    if (backends.size() <= 1) {
+        std::cout << "No other backends available to switch to." << std::endl;
+        return;
+    }
+
+    auto it = std::find(backends.begin(), backends.end(), _backendName);
+    std::string nextBackend;
+    if (it == backends.end() || ++it == backends.end()) {
+        nextBackend = backends.front(); // Wrap around
+    } else {
+        nextBackend = *it;
+    }
+
+    std::cout << "Switching backend: " << _backendName << " -> " << nextBackend << std::endl;
+
+    // Shutdown and release the current renderer
+    if (_renderer) {
+        _renderer->Shutdown();
+        _renderer.reset();
+    }
+
+    // Create the new renderer
+    _backendName = nextBackend;
+    _renderer = BackendRegistry::Instance().Create(_backendName);
+    if (!_renderer) {
+        std::cerr << "Failed to create renderer for backend: " << _backendName << std::endl;
+        return;
+    }
+
+    // Initialize with the current model and environment
     _renderer->Initialize(GetWindow(), _environment, _model, GetWidth(), GetHeight());
 }
 
 void GltfViewerApp::OnFrame(float dtSeconds) {
+    if (!_renderer) {
+        return;
+    }
+
     _model.Update(dtSeconds, _animateModel);
 
     CameraUniformsInput cameraInput{
@@ -83,6 +143,8 @@ void GltfViewerApp::OnKeyPressed(int key, int mods) {
         } else {
             _animateModel = !_animateModel;
         }
+    } else if (key == GLFW_KEY_B) {
+        SwitchToNextBackend();
     } else if (key == GLFW_KEY_ESCAPE) {
         RequestQuit();
     } else if (key == GLFW_KEY_R) {

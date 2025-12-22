@@ -6,6 +6,8 @@
 set(gfx_renderer_core_sources
   IRenderer.h
   RendererTypes.h
+  backends/common/BackendRegistry.cpp
+  backends/common/BackendRegistry.h
   scene/Environment.cpp
   scene/Environment.h
   scene/MeshUtils.cpp
@@ -22,6 +24,7 @@ add_library(gfx_renderer_core ${gfx_renderer_core_sources})
 
 target_include_directories(gfx_renderer_core PUBLIC
   ${CMAKE_CURRENT_LIST_DIR}
+  ${CMAKE_CURRENT_LIST_DIR}/backends/common
   ${CMAKE_CURRENT_LIST_DIR}/scene
 )
 

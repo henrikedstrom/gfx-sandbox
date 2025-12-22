@@ -1,11 +1,23 @@
-// Standard Library
-#include <iostream>
+// Class Header
+#include "VulkanRenderer.h"
 
-// Third-Party
+// Standard Library Headers
+#include <iostream>
+#include <memory>
+
+// Third-Party Library Headers
 #include <vulkan/vulkan.h>
 
-// Project
-#include "VulkanRenderer.h"
+// Project Headers
+#include "BackendRegistry.h"
+
+//----------------------------------------------------------------------
+// Backend Registration
+
+static bool s_registered = [] {
+    return BackendRegistry::Instance().Register(
+        "vulkan", []() { return std::make_unique<VulkanRenderer>(); });
+}();
 
 void VulkanRenderer::Initialize([[maybe_unused]] GLFWwindow* window,
                                 [[maybe_unused]] const Environment& environment,
@@ -13,6 +25,12 @@ void VulkanRenderer::Initialize([[maybe_unused]] GLFWwindow* window,
                                 [[maybe_unused]] uint32_t width, [[maybe_unused]] uint32_t height) {
     // Skeleton only: we don't create a VkInstance/Device/Swapchain yet.
     // This is intentionally minimal to keep the interface honest while we refactor.
+    _reportedNotImplemented = false;
+}
+
+void VulkanRenderer::Shutdown() {
+    // Skeleton only: no resources to release yet.
+    std::cout << "[VulkanRenderer] Shutdown complete." << std::endl;
 }
 
 void VulkanRenderer::Resize([[maybe_unused]] uint32_t width, [[maybe_unused]] uint32_t height) {

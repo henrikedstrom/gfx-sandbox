@@ -18,7 +18,7 @@ class OrbitControls;
 // GltfViewerApp Class
 class GltfViewerApp final : public Application {
   public:
-    explicit GltfViewerApp(uint32_t width, uint32_t height);
+    GltfViewerApp(int argc, char** argv);
     ~GltfViewerApp() override;
 
   protected:
@@ -30,6 +30,10 @@ class GltfViewerApp final : public Application {
                        int length = 0) override;
 
   private:
+    static std::string ParseBackendArg(int argc, char** argv);
+    void SwitchToNextBackend();
+
+    std::string _backendName;
     bool _animateModel{true};
     Camera _camera;
     Environment _environment;

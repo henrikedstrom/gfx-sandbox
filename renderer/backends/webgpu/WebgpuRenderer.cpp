@@ -1,3 +1,6 @@
+// Class Header
+#include "WebgpuRenderer.h"
+
 // Standard Library Headers
 #include <algorithm>
 #include <chrono>
@@ -19,21 +22,29 @@
 #if defined(__EMSCRIPTEN__)
 #include <emscripten/emscripten.h>
 #elif defined(GFX_USE_DAWN_NATIVE_PROC)
-  // Only needed when using dawn_native/dawn_proc (Xcode generator workaround)
-  // For other generators, webgpu_dawn handles this automatically
-  #include "dawn/native/DawnNative.h"
-  #include "dawn/dawn_proc.h"
+// Only needed when using dawn_native/dawn_proc (Xcode generator workaround)
+// For other generators, webgpu_dawn handles this automatically
+#include "dawn/dawn_proc.h"
+#include "dawn/native/DawnNative.h"
 #endif
 #include <webgpu/webgpu_glfw.h>
 
 // Project Headers
+#include "BackendRegistry.h"
 #include "Environment.h"
 #include "EnvironmentPreprocessor.h"
 #include "MipmapGenerator.h"
 #include "Model.h"
 #include "PanoramaToCubemapConverter.h"
 #include "ShaderUtils.h"
-#include "WebgpuRenderer.h"
+
+//----------------------------------------------------------------------
+// Backend Registration
+
+static bool s_registered = [] {
+    return BackendRegistry::Instance().Register(
+        "webgpu", []() { return std::make_unique<WebgpuRenderer>(); });
+}();
 
 //----------------------------------------------------------------------
 // Internal Utility Functions
@@ -208,9 +219,7 @@ void WebgpuRenderer::Initialize(GLFWwindow* window, const Environment& environme
     // Only needed when using dawn_native/dawn_proc (Xcode generator workaround)
     // For other generators, webgpu_dawn handles this automatically
     static struct DawnProcsInitializer {
-        DawnProcsInitializer() {
-            dawnProcSetProcs(&dawn::native::GetProcs());
-        }
+        DawnProcsInitializer() { dawnProcSetProcs(&dawn::native::GetProcs()); }
     } initDawnProcs;
 #endif
 
@@ -306,7 +315,89 @@ void WebgpuRenderer::Initialize(GLFWwindow* window, const Environment& environme
         });
     _instance.WaitAny(deviceFuture, UINT64_MAX);
 
+    _isShutdown = false;
     InitGraphics(environment, model, width, height);
+}
+
+WebgpuRenderer::~WebgpuRenderer() {
+    Shutdown();
+}
+
+void WebgpuRenderer::Shutdown() {
+    if (_isShutdown) {
+        return;
+    }
+    _isShutdown = true;
+
+    // Wait for GPU to finish all pending work before releasing resources
+    if (_device) {
+        wgpu::Future workDoneFuture = _device.GetQueue().OnSubmittedWorkDone(
+            wgpu::CallbackMode::WaitAnyOnly,
+            [](wgpu::QueueWorkDoneStatus /*status*/, const char* /*message*/) {});
+        _instance.WaitAny(workDoneFuture, UINT64_MAX);
+    }
+
+    // Clear collections first (these hold GPU resources)
+    _materials.clear();
+    _opaqueMeshes.clear();
+    _transparentMeshes.clear();
+    _transparentMeshesDepthSorted.clear();
+
+    // Release GPU resources in reverse dependency order
+    // Pipelines and shader modules
+    _modelPipelineOpaque = nullptr;
+    _modelPipelineTransparent = nullptr;
+    _modelShaderModule = nullptr;
+    _environmentPipeline = nullptr;
+    _environmentShaderModule = nullptr;
+
+    // Bind groups and layouts
+    _globalBindGroup = nullptr;
+    _globalBindGroupLayout = nullptr;
+    _modelBindGroupLayout = nullptr;
+
+    // Buffers
+    _vertexBuffer = nullptr;
+    _indexBuffer = nullptr;
+    _globalUniformBuffer = nullptr;
+    _modelUniformBuffer = nullptr;
+
+    // Samplers
+    _modelTextureSampler = nullptr;
+    _environmentCubeSampler = nullptr;
+    _iblBrdfIntegrationLUTSampler = nullptr;
+
+    // Environment textures and views
+    _environmentTextureView = nullptr;
+    _environmentTexture = nullptr;
+    _iblIrradianceTextureView = nullptr;
+    _iblIrradianceTexture = nullptr;
+    _iblSpecularTextureView = nullptr;
+    _iblSpecularTexture = nullptr;
+    _iblBrdfIntegrationLUTView = nullptr;
+    _iblBrdfIntegrationLUT = nullptr;
+
+    // Default textures
+    _defaultSRGBTextureView = nullptr;
+    _defaultSRGBTexture = nullptr;
+    _defaultUNormTextureView = nullptr;
+    _defaultUNormTexture = nullptr;
+    _defaultNormalTextureView = nullptr;
+    _defaultNormalTexture = nullptr;
+    _defaultCubeTextureView = nullptr;
+    _defaultCubeTexture = nullptr;
+
+    // Depth texture
+    _depthTextureView = nullptr;
+    _depthTexture = nullptr;
+
+    // Surface and core objects
+    _surface = nullptr;
+    _device = nullptr;
+    _adapter = nullptr;
+    _instance = nullptr;
+
+    std::cout << "[WebgpuRenderer] Shutdown complete." << std::endl;
 }
 
 void WebgpuRenderer::Resize(uint32_t width, uint32_t height) {
@@ -339,13 +430,13 @@ void WebgpuRenderer::Render(const glm::mat4& modelMatrix, const CameraUniformsIn
     pass.SetIndexBuffer(_indexBuffer, wgpu::IndexFormat::Uint32);
 
     pass.SetPipeline(_modelPipelineOpaque);
-    for (auto subMesh : _opaqueMeshes) {
+    for (const auto& subMesh : _opaqueMeshes) {
         pass.SetBindGroup(1, _materials[subMesh._materialIndex]._bindGroup);
         pass.DrawIndexed(subMesh._indexCount, 1u, subMesh._firstIndex);
     }
 
     pass.SetPipeline(_modelPipelineTransparent);
-    for (auto depthInfo : _transparentMeshesDepthSorted) {
+    for (const auto& depthInfo : _transparentMeshesDepthSorted) {
         const SubMesh& subMesh = _transparentMeshes[depthInfo._meshIndex];
         pass.SetBindGroup(1, _materials[subMesh._materialIndex]._bindGroup);
         pass.DrawIndexed(subMesh._indexCount, 1u, subMesh._firstIndex);
@@ -792,7 +883,7 @@ void WebgpuRenderer::CreateSubMeshes(const Model& model) {
     _transparentMeshes.clear();
     _opaqueMeshes.reserve(model.GetSubMeshes().size());
 
-    for (auto srcSubMesh : model.GetSubMeshes()) {
+    for (const auto& srcSubMesh : model.GetSubMeshes()) {
         SubMesh dstSubMesh = {._firstIndex = srcSubMesh._firstIndex,
                               ._indexCount = srcSubMesh._indexCount,
                               ._materialIndex = srcSubMesh._materialIndex,

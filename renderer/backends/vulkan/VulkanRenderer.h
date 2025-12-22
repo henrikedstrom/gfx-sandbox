@@ -1,8 +1,10 @@
 #pragma once
 
-#include "IRenderer.h"
-
+// Standard Library Headers
 #include <cstdint>
+
+// Project Headers
+#include "IRenderer.h"
 
 class VulkanRenderer final : public IRenderer {
   public:
@@ -16,6 +18,7 @@ class VulkanRenderer final : public IRenderer {
 
     void Initialize(GLFWwindow* window, const Environment& environment, const Model& model,
                     uint32_t width, uint32_t height) override;
+    void Shutdown() override;
     void Resize(uint32_t width, uint32_t height) override;
     void Render(const glm::mat4& modelMatrix, const CameraUniformsInput& camera) override;
 

@@ -32,15 +32,11 @@ set(GFX_ROOT_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
 # Backend selection options
 
 option(ENABLE_WEBGPU "Enable WebGPU (Dawn) renderer backend" ON)
-option(ENABLE_VULKAN "Enable Vulkan renderer backend" OFF)
+option(ENABLE_VULKAN "Enable Vulkan renderer backend" ON)
 
 if(NOT ENABLE_WEBGPU AND NOT ENABLE_VULKAN)
   message(FATAL_ERROR "At least one backend must be enabled: ENABLE_WEBGPU and/or ENABLE_VULKAN")
 endif()
-
-# Used only when both backends are enabled and we need a build-time default.
-set(GFX_SELECTED_BACKEND "webgpu" CACHE STRING "Selected backend when both are enabled: webgpu|vulkan")
-set_property(CACHE GFX_SELECTED_BACKEND PROPERTY STRINGS webgpu vulkan)
 
 
 # ----------------------------------------------------------------------

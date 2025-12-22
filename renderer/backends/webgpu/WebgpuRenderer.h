@@ -10,7 +10,7 @@
 #include <glm/glm.hpp>
 #include <webgpu/webgpu_cpp.h>
 
-// Project
+// Project Headers
 #include "IRenderer.h"
 
 // Forward Declarations
@@ -21,7 +21,7 @@ class Model;
 class WebgpuRenderer final : public IRenderer {
   public:
     WebgpuRenderer() = default;
-    ~WebgpuRenderer() override = default;
+    ~WebgpuRenderer() override;
 
     // Non-copyable and non-movable
     WebgpuRenderer(const WebgpuRenderer&) = delete;
@@ -32,6 +32,7 @@ class WebgpuRenderer final : public IRenderer {
     // IRenderer interface implementation
     void Initialize(GLFWwindow* window, const Environment& environment, const Model& model,
                     uint32_t width, uint32_t height) override;
+    void Shutdown() override;
     void Resize(uint32_t width, uint32_t height) override;
     void Render(const glm::mat4& modelMatrix, const CameraUniformsInput& camera) override;
     void ReloadShaders() override;
@@ -167,4 +168,7 @@ class WebgpuRenderer final : public IRenderer {
 
     // Per-frame sorted transparent meshes
     std::vector<SubMeshDepthInfo> _transparentMeshesDepthSorted;
+
+    // Shutdown state
+    bool _isShutdown{false};
 };
