@@ -1,16 +1,16 @@
-// Standard Library
+// Class Header
+#include "Application.h"
+
+// Standard Library Headers
 #include <algorithm>
 #include <cassert>
 #include <cctype>
 
-// Third-Party
+// Third-Party Library Headers
 #include <GLFW/glfw3.h>
 #if defined(__EMSCRIPTEN__)
 #include <emscripten/emscripten.h>
 #endif
-
-// Project
-#include "Application.h"
 
 Application* Application::s_instance = nullptr;
 

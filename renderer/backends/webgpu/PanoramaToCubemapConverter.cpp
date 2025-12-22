@@ -1,10 +1,12 @@
+// Class Header
+#include "PanoramaToCubemapConverter.h"
+
 // Standard Library Headers
 #include <iostream>
 #include <string>
 #include <vector>
 
 // Project Headers
-#include "PanoramaToCubemapConverter.h"
 #include "ShaderUtils.h"
 
 //----------------------------------------------------------------------

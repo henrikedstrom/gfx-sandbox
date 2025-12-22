@@ -1,10 +1,10 @@
+// Class Header
+#include "ShaderUtils.h"
+
 // Standard Library Headers
 #include <fstream>
 #include <iostream>
 #include <sstream>
-
-// Project Headers
-#include "ShaderUtils.h"
 
 namespace shader_utils {
 

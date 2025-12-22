@@ -1,11 +1,11 @@
+// Class Header
+#include "Camera.h"
+
 // Standard Library Headers
 #include <iostream>
 
 // Third-Party Library Headers
 #include <glm/gtc/matrix_transform.hpp>
-
-// Project Headers
-#include "Camera.h"
 
 //----------------------------------------------------------------------
 // Internal Constants

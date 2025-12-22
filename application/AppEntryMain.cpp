@@ -1,26 +1,20 @@
-// Standard Library
-#include <cstdint>
+// Standard Library Headers
 #include <cstdlib>
 #include <memory>
 
-// Third-Party
+// Third-Party Library Headers
 #if defined(__EMSCRIPTEN__)
 #include <emscripten/emscripten.h>
 #endif
 
-// Project
+// Project Headers
 #include "Application.h"
 
 // Implemented by each sample app
-std::unique_ptr<Application> CreateApplication(uint32_t width, uint32_t height);
+std::unique_ptr<Application> CreateApplication(int argc, char** argv);
 
-namespace {
-constexpr uint32_t kDefaultWidth = 800;
-constexpr uint32_t kDefaultHeight = 600;
-} // namespace
-
-int main() {
-    auto app = CreateApplication(kDefaultWidth, kDefaultHeight);
+int main(int argc, char** argv) {
+    auto app = CreateApplication(argc, argv);
     if (!app) {
         return EXIT_FAILURE;
     }

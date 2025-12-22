@@ -1,9 +1,13 @@
 #pragma once
 
-#include "RendererTypes.h"
-
+// Standard Library Headers
 #include <cstdint>
+
+// Third-Party Library Headers
 #include <glm/glm.hpp>
+
+// Project Headers
+#include "RendererTypes.h"
 
 struct GLFWwindow;
 class Environment;
@@ -15,6 +19,7 @@ class IRenderer {
 
     virtual void Initialize(GLFWwindow* window, const Environment& environment, const Model& model,
                             uint32_t width, uint32_t height) = 0;
+    virtual void Shutdown() {}
     virtual void Resize(uint32_t width, uint32_t height) = 0;
     virtual void Render(const glm::mat4& modelMatrix, const CameraUniformsInput& camera) = 0;
 

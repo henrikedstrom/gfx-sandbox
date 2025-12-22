@@ -1,3 +1,6 @@
+// Class Header
+#include "Model.h"
+
 // Standard Library Headers
 #include <iostream>
 #include <limits>
@@ -15,7 +18,6 @@
 
 // Project Headers
 #include "MeshUtils.h"
-#include "Model.h"
 
 //----------------------------------------------------------------------
 // Internal Constants and Utility Functions

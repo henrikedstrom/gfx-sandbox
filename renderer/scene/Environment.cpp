@@ -1,3 +1,6 @@
+// Class Header
+#include "Environment.h"
+
 // Standard Library Headers
 #include <algorithm>
 #include <chrono>
@@ -10,9 +13,6 @@
 #include <glm/ext.hpp>
 #include <glm/glm.hpp>
 #include <stb_image.h>
-
-// Project Headers
-#include "Environment.h"
 
 // ----------------------------------------------------------------------
 // Internal

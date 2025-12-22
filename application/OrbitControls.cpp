@@ -1,4 +1,7 @@
-// Standard Library
+// Class Header
+#include "OrbitControls.h"
+
+// Standard Library Headers
 #include <unordered_map>
 
 // Third-Party Library Headers
@@ -6,7 +9,6 @@
 
 // Project Headers
 #include "Camera.h"
-#include "OrbitControls.h"
 
 namespace {
 

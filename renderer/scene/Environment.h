@@ -1,9 +1,12 @@
 #pragma once
 
+// Standard Library Headers
 #include <cstdint>
-#include <glm/glm.hpp>
 #include <string>
 #include <vector>
+
+// Third-Party Library Headers
+#include <glm/glm.hpp>
 
 class Environment {
   public:

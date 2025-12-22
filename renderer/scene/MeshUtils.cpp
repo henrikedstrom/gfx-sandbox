@@ -1,8 +1,10 @@
+// Class Header
+#include "MeshUtils.h"
+
 // Standard Library Headers
 #include <iostream>
 
-// Project Headers
-#include "MeshUtils.h"
+// Third-Party Library Headers
 #include "mikktspace.h"
 
 //----------------------------------------------------------------------
