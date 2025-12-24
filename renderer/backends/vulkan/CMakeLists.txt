@@ -11,6 +11,9 @@ endif()
 find_package(Vulkan REQUIRED)
 
 set(gfx_renderer_vulkan_sources
+  VulkanConfig.h
+  VulkanCore.cpp
+  VulkanCore.h
   VulkanRenderer.cpp
   VulkanRenderer.h
 )
@@ -27,6 +30,7 @@ target_link_libraries(gfx_renderer_vulkan PUBLIC
   gfx_build_options
   gfx_renderer_core
   Vulkan::Vulkan
+  glfw
 )
 
 set_target_properties(gfx_renderer_vulkan PROPERTIES FOLDER "Renderer/Backends/Vulkan")

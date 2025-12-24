@@ -5,11 +5,9 @@
 #include <iostream>
 #include <memory>
 
-// Third-Party Library Headers
-#include <vulkan/vulkan.h>
-
 // Project Headers
 #include "BackendRegistry.h"
+#include "VulkanCore.h"
 
 //----------------------------------------------------------------------
 // Backend Registration
@@ -19,22 +17,33 @@ static bool s_registered = [] {
         "vulkan", []() { return std::make_unique<VulkanRenderer>(); });
 }();
 
-void VulkanRenderer::Initialize([[maybe_unused]] GLFWwindow* window,
+//----------------------------------------------------------------------
+// Construction / Destruction
+
+VulkanRenderer::~VulkanRenderer() {
+    Shutdown();
+}
+
+//----------------------------------------------------------------------
+// IRenderer Interface
+
+void VulkanRenderer::Initialize(GLFWwindow* window,
                                 [[maybe_unused]] const Environment& environment,
                                 [[maybe_unused]] const Model& model,
-                                [[maybe_unused]] uint32_t width, [[maybe_unused]] uint32_t height) {
-    // Skeleton only: we don't create a VkInstance/Device/Swapchain yet.
-    // This is intentionally minimal to keep the interface honest while we refactor.
+                                [[maybe_unused]] uint32_t width,
+                                [[maybe_unused]] uint32_t height) {
+    _core = std::make_unique<VulkanCore>(window);
     _reportedNotImplemented = false;
 }
 
 void VulkanRenderer::Shutdown() {
-    // Skeleton only: no resources to release yet.
+    _core.reset();
     std::cout << "[VulkanRenderer] Shutdown complete." << std::endl;
 }
 
-void VulkanRenderer::Resize([[maybe_unused]] uint32_t width, [[maybe_unused]] uint32_t height) {
-    // Skeleton only.
+void VulkanRenderer::Resize([[maybe_unused]] uint32_t width,
+                            [[maybe_unused]] uint32_t height) {
+    // Not yet implemented.
 }
 
 void VulkanRenderer::Render([[maybe_unused]] const glm::mat4& modelMatrix,
@@ -46,9 +55,9 @@ void VulkanRenderer::Render([[maybe_unused]] const glm::mat4& modelMatrix,
 }
 
 void VulkanRenderer::UpdateModel([[maybe_unused]] const Model& model) {
-    // Skeleton only.
+    // Not yet implemented.
 }
 
 void VulkanRenderer::UpdateEnvironment([[maybe_unused]] const Environment& environment) {
-    // Skeleton only.
+    // Not yet implemented.
 }

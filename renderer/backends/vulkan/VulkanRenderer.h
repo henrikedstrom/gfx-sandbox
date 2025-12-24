@@ -2,14 +2,18 @@
 
 // Standard Library Headers
 #include <cstdint>
+#include <memory>
 
 // Project Headers
 #include "IRenderer.h"
 
+// Forward Declarations
+class VulkanCore;
+
 class VulkanRenderer final : public IRenderer {
   public:
     VulkanRenderer() = default;
-    ~VulkanRenderer() override = default;
+    ~VulkanRenderer() override;
 
     VulkanRenderer(const VulkanRenderer&) = delete;
     VulkanRenderer& operator=(const VulkanRenderer&) = delete;
@@ -27,5 +31,6 @@ class VulkanRenderer final : public IRenderer {
     void UpdateEnvironment(const Environment& environment) override;
 
   private:
+    std::unique_ptr<VulkanCore> _core;
     bool _reportedNotImplemented{false};
 };
