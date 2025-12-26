@@ -31,6 +31,9 @@ constexpr const char* kModuleName = "VulkanBackend";
 // TODO: Replace with cvar later
 constexpr vk::PresentModeKHR kPreferredPresentMode = vk::PresentModeKHR::eMailbox;
 
+// Synchronization Settings
+constexpr uint32_t kMaxFramesInFlight = 2;
+
 // Simple message (no formatting)
 inline void LogInfo(std::string_view msg) {
     std::cout << "[" << kModuleName << "] " << msg << std::endl;

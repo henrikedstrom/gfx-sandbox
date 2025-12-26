@@ -3,8 +3,12 @@
 /// @file  VulkanRenderer.h
 /// @brief IRenderer implementation using the Vulkan graphics API.
 
+// Vulkan-HPP Configuration (must be included first)
+#include "VulkanConfig.h"
+
 // Standard Library Headers
 #include <memory>
+#include <vector>
 
 // Project Headers
 #include "IRenderer.h"
@@ -34,8 +38,30 @@ class VulkanRenderer final : public IRenderer {
     void UpdateEnvironment(const Environment& environment) override;
 
   private:
+    // Initialization helpers
+    void CreateRenderPass();
+    void CreateFramebuffers();
+    void CreateCommandPool();
+    void CreateCommandBuffers();
+    void CreateSyncObjects();
+    void RecreateFramebuffers();
+
+    // Core Vulkan objects
     std::unique_ptr<VulkanCore> _core;
     std::unique_ptr<VulkanSwapchain> _swapchain;
     GLFWwindow* _window{nullptr};
-    bool _reportedNotImplemented{false};
+
+    // Render pass and framebuffers
+    vk::raii::RenderPass _renderPass{nullptr};
+    std::vector<vk::raii::Framebuffer> _framebuffers;
+
+    // Command pool and buffers
+    vk::raii::CommandPool _commandPool{nullptr};
+    std::vector<vk::raii::CommandBuffer> _commandBuffers;
+
+    // Synchronization primitives (per frame in flight)
+    std::vector<vk::raii::Semaphore> _imageAvailableSemaphores;
+    std::vector<vk::raii::Semaphore> _renderFinishedSemaphores;
+    std::vector<vk::raii::Fence> _inFlightFences;
+    uint32_t _currentFrame{0};
 };
