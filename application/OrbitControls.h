@@ -1,3 +1,6 @@
+/// @file  OrbitControls.h
+/// @brief Mouse-driven orbit controls that drive a Camera via GLFW callbacks.
+
 #pragma once
 
 // Third-Party Library Headers

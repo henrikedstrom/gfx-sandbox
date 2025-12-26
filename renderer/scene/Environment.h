@@ -1,3 +1,6 @@
+/// @file  Environment.h
+/// @brief HDR environment map loading and storage.
+
 #pragma once
 
 // Standard Library Headers

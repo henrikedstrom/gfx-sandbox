@@ -1,3 +1,6 @@
+/// @file  RendererTypes.h
+/// @brief Shared types used across renderer implementations.
+
 #pragma once
 
 // Third-Party Library Headers

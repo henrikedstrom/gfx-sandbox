@@ -1,3 +1,6 @@
+/// @file  Application.h
+/// @brief Base application class providing window management and main loop.
+
 #pragma once
 
 // Standard Library Headers

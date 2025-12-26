@@ -1,3 +1,6 @@
+/// @file  WebgpuRenderer.h
+/// @brief IRenderer implementation using the WebGPU graphics API.
+
 #pragma once
 
 // Standard Library Headers

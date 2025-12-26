@@ -1,3 +1,6 @@
+/// @file  IRenderer.h
+/// @brief Abstract renderer interface for graphics backend implementations.
+
 #pragma once
 
 // Standard Library Headers

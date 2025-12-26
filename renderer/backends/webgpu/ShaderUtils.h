@@ -1,3 +1,6 @@
+/// @file  ShaderUtils.h
+/// @brief Utility functions for loading shader source files.
+
 #pragma once
 
 // Standard Library Headers

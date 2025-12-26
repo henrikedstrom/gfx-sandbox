@@ -1,3 +1,6 @@
+/// @file  Camera.h
+/// @brief Orbital camera with tumble, pan, zoom, and auto-framing support.
+
 #pragma once
 
 // Third-Party Library Headers

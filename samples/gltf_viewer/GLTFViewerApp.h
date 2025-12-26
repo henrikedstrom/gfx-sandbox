@@ -1,3 +1,6 @@
+/// @file  GLTFViewerApp.h
+/// @brief Sample application for viewing glTF models with PBR rendering.
+
 #pragma once
 
 // Standard Library Headers

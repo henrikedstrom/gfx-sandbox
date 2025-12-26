@@ -1,3 +1,6 @@
+/// @file  MipmapGenerator.h
+/// @brief GPU-based mipmap generation for 2D and cube textures.
+
 #pragma once
 
 // Standard Library Headers

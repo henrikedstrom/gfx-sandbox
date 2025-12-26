@@ -1,3 +1,6 @@
+/// @file  Model.h
+/// @brief glTF model loading, storage, and animation.
+
 #pragma once
 
 // Standard Library Headers

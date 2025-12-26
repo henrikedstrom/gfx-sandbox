@@ -1,3 +1,6 @@
+/// @file  BackendRegistry.h
+/// @brief Registry for graphics backend factories with runtime selection.
+
 #pragma once
 
 // Standard Library Headers

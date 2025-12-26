@@ -1,3 +1,6 @@
+/// @file  MeshUtils.h
+/// @brief Mesh processing utilities including tangent generation.
+
 #pragma once
 
 // Project Headers
