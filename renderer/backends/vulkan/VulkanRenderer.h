@@ -1,7 +1,9 @@
 #pragma once
 
+/// @file  VulkanRenderer.h
+/// @brief IRenderer implementation using the Vulkan graphics API.
+
 // Standard Library Headers
-#include <cstdint>
 #include <memory>
 
 // Project Headers
@@ -9,6 +11,7 @@
 
 // Forward Declarations
 class VulkanCore;
+class VulkanSwapchain;
 
 class VulkanRenderer final : public IRenderer {
   public:
@@ -20,10 +23,10 @@ class VulkanRenderer final : public IRenderer {
     VulkanRenderer(VulkanRenderer&&) = delete;
     VulkanRenderer& operator=(VulkanRenderer&&) = delete;
 
-    void Initialize(GLFWwindow* window, const Environment& environment, const Model& model,
-                    uint32_t width, uint32_t height) override;
+    void Initialize(GLFWwindow* window, const Environment& environment,
+                    const Model& model) override;
     void Shutdown() override;
-    void Resize(uint32_t width, uint32_t height) override;
+    void Resize() override;
     void Render(const glm::mat4& modelMatrix, const CameraUniformsInput& camera) override;
 
     void ReloadShaders() override {}
@@ -32,5 +35,7 @@ class VulkanRenderer final : public IRenderer {
 
   private:
     std::unique_ptr<VulkanCore> _core;
+    std::unique_ptr<VulkanSwapchain> _swapchain;
+    GLFWwindow* _window{nullptr};
     bool _reportedNotImplemented{false};
 };

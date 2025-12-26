@@ -7,6 +7,7 @@
 // Project Headers
 #include "BackendRegistry.h"
 #include "VulkanCore.h"
+#include "VulkanSwapchain.h"
 
 //----------------------------------------------------------------------
 // Backend Registration
@@ -27,19 +28,24 @@ VulkanRenderer::~VulkanRenderer() {
 // IRenderer Interface
 
 void VulkanRenderer::Initialize(GLFWwindow* window, [[maybe_unused]] const Environment& environment,
-                                [[maybe_unused]] const Model& model,
-                                [[maybe_unused]] uint32_t width, [[maybe_unused]] uint32_t height) {
+                                [[maybe_unused]] const Model& model) {
+    _window = window;
     _core = std::make_unique<VulkanCore>(window);
+    _swapchain = std::make_unique<VulkanSwapchain>(*_core, window);
     _reportedNotImplemented = false;
 }
 
 void VulkanRenderer::Shutdown() {
+    // Destroy in reverse order of creation
+    _swapchain.reset();
     _core.reset();
     VK_LOG_INFO("Shutdown complete.");
 }
 
-void VulkanRenderer::Resize([[maybe_unused]] uint32_t width, [[maybe_unused]] uint32_t height) {
-    // Not yet implemented.
+void VulkanRenderer::Resize() {
+    if (_swapchain && _core && _window) {
+        _swapchain->Recreate(*_core, _window);
+    }
 }
 
 void VulkanRenderer::Render([[maybe_unused]] const glm::mat4& modelMatrix,

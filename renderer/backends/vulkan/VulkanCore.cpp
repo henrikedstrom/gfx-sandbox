@@ -391,3 +391,7 @@ uint32_t VulkanCore::GetGraphicsQueueFamily() const {
 uint32_t VulkanCore::GetPresentQueueFamily() const {
     return _presentQueueFamily;
 }
+
+const vk::raii::Device& VulkanCore::GetRaiiDevice() const {
+    return _device;
+}

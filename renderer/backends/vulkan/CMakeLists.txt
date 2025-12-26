@@ -16,6 +16,8 @@ set(gfx_renderer_vulkan_sources
   VulkanCore.h
   VulkanRenderer.cpp
   VulkanRenderer.h
+  VulkanSwapchain.cpp
+  VulkanSwapchain.h
 )
 
 source_group(TREE "${CMAKE_CURRENT_LIST_DIR}" FILES ${gfx_renderer_vulkan_sources})

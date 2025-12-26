@@ -30,10 +30,10 @@ class WebgpuRenderer final : public IRenderer {
     WebgpuRenderer& operator=(WebgpuRenderer&&) = delete;
 
     // IRenderer interface implementation
-    void Initialize(GLFWwindow* window, const Environment& environment, const Model& model,
-                    uint32_t width, uint32_t height) override;
+    void Initialize(GLFWwindow* window, const Environment& environment,
+                    const Model& model) override;
     void Shutdown() override;
-    void Resize(uint32_t width, uint32_t height) override;
+    void Resize() override;
     void Render(const glm::mat4& modelMatrix, const CameraUniformsInput& camera) override;
     void ReloadShaders() override;
     void UpdateModel(const Model& model) override;
@@ -41,10 +41,10 @@ class WebgpuRenderer final : public IRenderer {
 
   private:
     // Private utility methods
-    void InitGraphics(const Environment& environment, const Model& model, uint32_t width,
-                      uint32_t height);
-    void ConfigureSurface(uint32_t width, uint32_t height);
-    void CreateDepthTexture(uint32_t width, uint32_t height);
+    void InitGraphics(const Environment& environment, const Model& model);
+    void ConfigureSurface();
+    void CreateDepthTexture();
+    std::pair<uint32_t, uint32_t> GetFramebufferSize() const;
     void CreateBindGroupLayouts();
     void CreateSamplers();
     void CreateVertexBuffer(const Model& model);
@@ -168,6 +168,9 @@ class WebgpuRenderer final : public IRenderer {
 
     // Per-frame sorted transparent meshes
     std::vector<SubMeshDepthInfo> _transparentMeshesDepthSorted;
+
+    // Window reference for querying framebuffer size
+    GLFWwindow* _window{nullptr};
 
     // Shutdown state
     bool _isShutdown{false};

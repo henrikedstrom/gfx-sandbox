@@ -213,7 +213,8 @@ void CreateEnvironmentTexture(wgpu::Device device, wgpu::TextureViewDimension ty
 // Renderer Class implementation
 
 void WebgpuRenderer::Initialize(GLFWwindow* window, const Environment& environment,
-                                const Model& model, uint32_t width, uint32_t height) {
+                                const Model& model) {
+    _window = window;
 #if defined(GFX_USE_DAWN_NATIVE_PROC)
     // Initialize Dawn proc table before creating WebGPU instance
     // Only needed when using dawn_native/dawn_proc (Xcode generator workaround)
@@ -316,7 +317,7 @@ void WebgpuRenderer::Initialize(GLFWwindow* window, const Environment& environme
     _instance.WaitAny(deviceFuture, UINT64_MAX);
 
     _isShutdown = false;
-    InitGraphics(environment, model, width, height);
+    InitGraphics(environment, model);
 }
 
 WebgpuRenderer::~WebgpuRenderer() {
@@ -400,9 +401,9 @@ void WebgpuRenderer::Shutdown() {
     std::cout << "[WebgpuRenderer] Shutdown complete." << std::endl;
 }
 
-void WebgpuRenderer::Resize(uint32_t width, uint32_t height) {
-    CreateDepthTexture(width, height);
-    ConfigureSurface(width, height);
+void WebgpuRenderer::Resize() {
+    CreateDepthTexture();
+    ConfigureSurface();
     _depthAttachment.view = _depthTextureView;
 }
 
@@ -500,10 +501,9 @@ void WebgpuRenderer::UpdateEnvironment(const Environment& environment) {
     std::cout << "Updated Environment WebGPU resources in " << totalMs << "ms" << std::endl;
 }
 
-void WebgpuRenderer::InitGraphics(const Environment& environment, const Model& model,
-                                  uint32_t width, uint32_t height) {
-    ConfigureSurface(width, height);
-    CreateDepthTexture(width, height);
+void WebgpuRenderer::InitGraphics(const Environment& environment, const Model& model) {
+    ConfigureSurface();
+    CreateDepthTexture();
 
     CreateBindGroupLayouts();
 
@@ -610,7 +610,15 @@ void WebgpuRenderer::CreateDefaultTextures() {
     }
 }
 
-void WebgpuRenderer::ConfigureSurface(uint32_t width, uint32_t height) {
+std::pair<uint32_t, uint32_t> WebgpuRenderer::GetFramebufferSize() const {
+    int width = 0;
+    int height = 0;
+    glfwGetFramebufferSize(_window, &width, &height);
+    return {static_cast<uint32_t>(std::max(width, 0)), static_cast<uint32_t>(std::max(height, 0))};
+}
+
+void WebgpuRenderer::ConfigureSurface() {
+    auto [width, height] = GetFramebufferSize();
     wgpu::SurfaceCapabilities capabilities;
     _surface.GetCapabilities(_adapter, &capabilities);
     _surfaceFormat = capabilities.formats[0];
@@ -622,7 +630,8 @@ void WebgpuRenderer::ConfigureSurface(uint32_t width, uint32_t height) {
     _surface.Configure(&config);
 }
 
-void WebgpuRenderer::CreateDepthTexture(uint32_t width, uint32_t height) {
+void WebgpuRenderer::CreateDepthTexture() {
+    auto [width, height] = GetFramebufferSize();
     wgpu::TextureDescriptor depthTextureDescriptor{};
     depthTextureDescriptor.size = {width, height, 1};
     depthTextureDescriptor.format = wgpu::TextureFormat::Depth24PlusStencil8;

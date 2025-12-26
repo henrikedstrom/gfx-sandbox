@@ -1,13 +1,11 @@
 #pragma once
 
-// ======================================================================
-// VulkanCore
-//
-// Manages core Vulkan objects: Instance, Physical Device, Logical Device,
-// and Queues. Uses RAII for automatic resource cleanup.
-// ======================================================================
+/// @file  VulkanCore.h
+/// @brief Manages core Vulkan objects: Instance, Physical Device, Logical Device, and Queues.
+///
+/// Uses Vulkan-HPP RAII wrappers for automatic resource cleanup.
 
-// Project Headers
+// Vulkan-HPP Configuration (must be included first)
 #include "VulkanConfig.h"
 
 // Forward Declarations
@@ -27,7 +25,7 @@ class VulkanCore final {
     VulkanCore(VulkanCore&&) = delete;
     VulkanCore& operator=(VulkanCore&&) = delete;
 
-    // Accessors
+    // Accessors (raw handles for interop)
     vk::Instance GetInstance() const;
     vk::PhysicalDevice GetPhysicalDevice() const;
     vk::Device GetDevice() const;
@@ -36,6 +34,9 @@ class VulkanCore final {
     vk::SurfaceKHR GetSurface() const;
     uint32_t GetGraphicsQueueFamily() const;
     uint32_t GetPresentQueueFamily() const;
+
+    // RAII accessors (for creating child objects)
+    const vk::raii::Device& GetRaiiDevice() const;
 
   private:
     // Core Vulkan objects managed via RAII wrappers.

@@ -1,12 +1,11 @@
 #pragma once
 
-// ======================================================================
-// Vulkan-HPP Configuration
-//
-// This header configures vulkan-hpp and must be included before any
-// other Vulkan headers. All Vulkan backend files should include this
-// header instead of including vulkan headers directly.
-// ======================================================================
+/// @file  VulkanConfig.h
+/// @brief Vulkan-HPP configuration and shared utilities for the Vulkan backend.
+///
+/// This header configures vulkan-hpp and must be included before any
+/// other Vulkan headers. All Vulkan backend files should include this
+/// header instead of including vulkan headers directly.
 
 // Use dynamic dispatch to load Vulkan functions at runtime.
 #define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1
@@ -15,12 +14,10 @@
 // Vulkan-RAII Library Headers
 #include <vulkan/vulkan_raii.hpp>
 
-// ======================================================================
 // Vulkan Backend Logging
 //
 // Simple logging functions for the Vulkan backend using C++20 std::format.
 // TODO: Replace with a proper logging system later.
-// ======================================================================
 
 #include <format>
 #include <iostream>
@@ -29,6 +26,10 @@
 namespace vkbackend {
 
 constexpr const char* kModuleName = "VulkanBackend";
+
+// Swapchain Settings
+// TODO: Replace with cvar later
+constexpr vk::PresentModeKHR kPreferredPresentMode = vk::PresentModeKHR::eMailbox;
 
 // Simple message (no formatting)
 inline void LogInfo(std::string_view msg) {

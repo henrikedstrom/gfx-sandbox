@@ -69,7 +69,7 @@ void GltfViewerApp::OnInit() {
         return;
     }
 
-    _renderer->Initialize(GetWindow(), _environment, _model, GetWidth(), GetHeight());
+    _renderer->Initialize(GetWindow(), _environment, _model);
 
     // Store the actual backend name (in case we used the default)
     if (_backendName.empty()) {
@@ -110,7 +110,7 @@ void GltfViewerApp::SwitchToNextBackend() {
     }
 
     // Initialize with the current model and environment
-    _renderer->Initialize(GetWindow(), _environment, _model, GetWidth(), GetHeight());
+    _renderer->Initialize(GetWindow(), _environment, _model);
 }
 
 void GltfViewerApp::OnFrame(float dtSeconds) {
@@ -132,7 +132,7 @@ void GltfViewerApp::OnFrame(float dtSeconds) {
 void GltfViewerApp::OnResize(int width, int height) {
     _camera.ResizeViewport(width, height);
     if (_renderer) {
-        _renderer->Resize(static_cast<uint32_t>(width), static_cast<uint32_t>(height));
+        _renderer->Resize();
     }
 }
 

@@ -4,7 +4,6 @@
 #pragma once
 
 // Standard Library Headers
-#include <cstdint>
 #include <string>
 
 // Third-Party Library Headers
