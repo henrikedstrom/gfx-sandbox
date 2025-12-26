@@ -44,7 +44,11 @@ class VulkanRenderer final : public IRenderer {
     void CreateCommandPool();
     void CreateCommandBuffers();
     void CreateSyncObjects();
+    void CreateDepthResources();
     void RecreateFramebuffers();
+
+    // Utility functions
+    vk::Format FindDepthFormat() const;
 
     // Core Vulkan objects
     std::unique_ptr<VulkanCore> _core;
@@ -54,6 +58,12 @@ class VulkanRenderer final : public IRenderer {
     // Render pass and framebuffers
     vk::raii::RenderPass _renderPass{nullptr};
     std::vector<vk::raii::Framebuffer> _framebuffers;
+
+    // Depth buffer
+    vk::raii::Image _depthImage{nullptr};
+    vk::raii::DeviceMemory _depthImageMemory{nullptr};
+    vk::raii::ImageView _depthImageView{nullptr};
+    vk::Format _depthFormat{vk::Format::eUndefined};
 
     // Command pool and buffers
     vk::raii::CommandPool _commandPool{nullptr};

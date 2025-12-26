@@ -37,6 +37,10 @@ class VulkanCore final {
 
     // RAII accessors (for creating child objects)
     const vk::raii::Device& GetRaiiDevice() const;
+    const vk::raii::PhysicalDevice& GetRaiiPhysicalDevice() const;
+
+    // Memory utilities
+    uint32_t FindMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties) const;
 
   private:
     // Core Vulkan objects managed via RAII wrappers.

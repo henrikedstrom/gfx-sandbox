@@ -34,6 +34,7 @@ void VulkanRenderer::Initialize(GLFWwindow* window, [[maybe_unused]] const Envir
     _core = std::make_unique<VulkanCore>(window);
     _swapchain = std::make_unique<VulkanSwapchain>(*_core, window);
 
+    CreateDepthResources();
     CreateRenderPass();
     CreateFramebuffers();
     CreateCommandPool();
@@ -60,7 +61,9 @@ void VulkanRenderer::Resize() {
         // Wait for device to be idle before recreating resources
         _core->GetDevice().waitIdle();
 
+        // Recreate swapchain, depth buffer, and framebuffers
         _swapchain->Recreate(*_core, _window);
+        CreateDepthResources();
         RecreateFramebuffers();
     }
 }
@@ -77,7 +80,7 @@ void VulkanRenderer::Render([[maybe_unused]] const glm::mat4& modelMatrix,
     }
 
     // Acquire the next swapchain image
-    uint32_t imageIndex;
+    uint32_t imageIndex{};
     try {
         auto acquireResult = device.acquireNextImageKHR(
             _swapchain->GetSwapchain(), UINT64_MAX,
@@ -110,17 +113,18 @@ void VulkanRenderer::Render([[maybe_unused]] const glm::mat4& modelMatrix,
     beginInfo.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
     cmd.begin(beginInfo);
 
-    // Begin render pass with clear color
-    vk::ClearValue clearColor{};
-    clearColor.color = vk::ClearColorValue{std::array<float, 4>{0.1f, 0.1f, 0.2f, 1.0f}};
+    // Begin render pass with clear values (color + depth)
+    std::array<vk::ClearValue, 2> clearValues{};
+    clearValues[0].color = vk::ClearColorValue{std::array<float, 4>{0.1f, 0.1f, 0.2f, 1.0f}};
+    clearValues[1].depthStencil = vk::ClearDepthStencilValue{1.0f, 0};
 
     vk::RenderPassBeginInfo renderPassInfo{};
     renderPassInfo.renderPass = *_renderPass;
     renderPassInfo.framebuffer = *_framebuffers[imageIndex];
     renderPassInfo.renderArea.offset = vk::Offset2D{0, 0};
     renderPassInfo.renderArea.extent = _swapchain->GetExtent();
-    renderPassInfo.clearValueCount = 1;
-    renderPassInfo.pClearValues = &clearColor;
+    renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
+    renderPassInfo.pClearValues = clearValues.data();
 
     cmd.beginRenderPass(renderPassInfo, vk::SubpassContents::eInline);
     // No draw calls yet - just clearing
@@ -177,6 +181,7 @@ void VulkanRenderer::UpdateEnvironment([[maybe_unused]] const Environment& envir
 // Private Implementation
 
 void VulkanRenderer::CreateRenderPass() {
+    // Color attachment
     vk::AttachmentDescription colorAttachment{};
     colorAttachment.format = _swapchain->GetImageFormat();
     colorAttachment.samples = vk::SampleCountFlagBits::e1;
@@ -191,23 +196,45 @@ void VulkanRenderer::CreateRenderPass() {
     colorAttachmentRef.attachment = 0;
     colorAttachmentRef.layout = vk::ImageLayout::eColorAttachmentOptimal;
 
+    // Depth attachment
+    vk::AttachmentDescription depthAttachment{};
+    depthAttachment.format = _depthFormat;
+    depthAttachment.samples = vk::SampleCountFlagBits::e1;
+    depthAttachment.loadOp = vk::AttachmentLoadOp::eClear;
+    depthAttachment.storeOp = vk::AttachmentStoreOp::eDontCare; // Not needed after rendering
+    depthAttachment.stencilLoadOp = vk::AttachmentLoadOp::eDontCare;
+    depthAttachment.stencilStoreOp = vk::AttachmentStoreOp::eDontCare;
+    depthAttachment.initialLayout = vk::ImageLayout::eUndefined;
+    depthAttachment.finalLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
+
+    vk::AttachmentReference depthAttachmentRef{};
+    depthAttachmentRef.attachment = 1;
+    depthAttachmentRef.layout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
+
+    // Subpass with color and depth attachments
     vk::SubpassDescription subpass{};
     subpass.pipelineBindPoint = vk::PipelineBindPoint::eGraphics;
     subpass.colorAttachmentCount = 1;
     subpass.pColorAttachments = &colorAttachmentRef;
+    subpass.pDepthStencilAttachment = &depthAttachmentRef;
 
     // Subpass dependency to ensure proper synchronization
     vk::SubpassDependency dependency{};
     dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
     dependency.dstSubpass = 0;
-    dependency.srcStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput;
+    dependency.srcStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput |
+                              vk::PipelineStageFlagBits::eEarlyFragmentTests;
     dependency.srcAccessMask = vk::AccessFlagBits::eNone;
-    dependency.dstStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput;
-    dependency.dstAccessMask = vk::AccessFlagBits::eColorAttachmentWrite;
+    dependency.dstStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput |
+                              vk::PipelineStageFlagBits::eEarlyFragmentTests;
+    dependency.dstAccessMask =
+        vk::AccessFlagBits::eColorAttachmentWrite | vk::AccessFlagBits::eDepthStencilAttachmentWrite;
+
+    std::array<vk::AttachmentDescription, 2> attachments = {colorAttachment, depthAttachment};
 
     vk::RenderPassCreateInfo renderPassInfo{};
-    renderPassInfo.attachmentCount = 1;
-    renderPassInfo.pAttachments = &colorAttachment;
+    renderPassInfo.attachmentCount = static_cast<uint32_t>(attachments.size());
+    renderPassInfo.pAttachments = attachments.data();
     renderPassInfo.subpassCount = 1;
     renderPassInfo.pSubpasses = &subpass;
     renderPassInfo.dependencyCount = 1;
@@ -224,12 +251,13 @@ void VulkanRenderer::CreateFramebuffers() {
     const auto extent = _swapchain->GetExtent();
 
     for (const auto& imageView : imageViews) {
-        vk::ImageView attachments[] = {*imageView};
+        // Color attachment (per swapchain image) + Depth attachment (shared)
+        std::array<vk::ImageView, 2> attachments = {*imageView, *_depthImageView};
 
         vk::FramebufferCreateInfo framebufferInfo{};
         framebufferInfo.renderPass = *_renderPass;
-        framebufferInfo.attachmentCount = 1;
-        framebufferInfo.pAttachments = attachments;
+        framebufferInfo.attachmentCount = static_cast<uint32_t>(attachments.size());
+        framebufferInfo.pAttachments = attachments.data();
         framebufferInfo.width = extent.width;
         framebufferInfo.height = extent.height;
         framebufferInfo.layers = 1;
@@ -269,6 +297,77 @@ void VulkanRenderer::CreateSyncObjects() {
         _renderFinishedSemaphores.push_back(_core->GetRaiiDevice().createSemaphore(semaphoreInfo));
         _inFlightFences.push_back(_core->GetRaiiDevice().createFence(fenceInfo));
     }
+}
+
+vk::Format VulkanRenderer::FindDepthFormat() const {
+    // Preferred depth formats in order of preference
+    const std::vector<vk::Format> candidates = {
+        vk::Format::eD32Sfloat,
+        vk::Format::eD32SfloatS8Uint,
+        vk::Format::eD24UnormS8Uint,
+    };
+
+    for (vk::Format format : candidates) {
+        vk::FormatProperties props =
+            _core->GetRaiiPhysicalDevice().getFormatProperties(format);
+
+        // Check if format supports depth stencil attachment
+        if (props.optimalTilingFeatures & vk::FormatFeatureFlagBits::eDepthStencilAttachment) {
+            return format;
+        }
+    }
+
+    throw std::runtime_error("Failed to find supported depth format!");
+}
+
+void VulkanRenderer::CreateDepthResources() {
+    _depthFormat = FindDepthFormat();
+    const auto extent = _swapchain->GetExtent();
+    const auto& device = _core->GetRaiiDevice();
+
+    // Create depth image
+    vk::ImageCreateInfo imageInfo{};
+    imageInfo.imageType = vk::ImageType::e2D;
+    imageInfo.extent.width = extent.width;
+    imageInfo.extent.height = extent.height;
+    imageInfo.extent.depth = 1;
+    imageInfo.mipLevels = 1;
+    imageInfo.arrayLayers = 1;
+    imageInfo.format = _depthFormat;
+    imageInfo.tiling = vk::ImageTiling::eOptimal;
+    imageInfo.initialLayout = vk::ImageLayout::eUndefined;
+    imageInfo.usage = vk::ImageUsageFlagBits::eDepthStencilAttachment;
+    imageInfo.sharingMode = vk::SharingMode::eExclusive;
+    imageInfo.samples = vk::SampleCountFlagBits::e1;
+
+    _depthImage = device.createImage(imageInfo);
+
+    // Allocate memory for the depth image
+    vk::MemoryRequirements memRequirements = _depthImage.getMemoryRequirements();
+
+    vk::MemoryAllocateInfo allocInfo{};
+    allocInfo.allocationSize = memRequirements.size;
+    allocInfo.memoryTypeIndex = _core->FindMemoryType(
+        memRequirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal);
+
+    _depthImageMemory = device.allocateMemory(allocInfo);
+    _depthImage.bindMemory(*_depthImageMemory, 0);
+
+    // Create depth image view
+    vk::ImageViewCreateInfo viewInfo{};
+    viewInfo.image = *_depthImage;
+    viewInfo.viewType = vk::ImageViewType::e2D;
+    viewInfo.format = _depthFormat;
+    viewInfo.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eDepth;
+    viewInfo.subresourceRange.baseMipLevel = 0;
+    viewInfo.subresourceRange.levelCount = 1;
+    viewInfo.subresourceRange.baseArrayLayer = 0;
+    viewInfo.subresourceRange.layerCount = 1;
+
+    _depthImageView = device.createImageView(viewInfo);
+
+    VK_LOG_INFO("Depth buffer created: {}x{}, format {}", extent.width, extent.height,
+                static_cast<int>(_depthFormat));
 }
 
 void VulkanRenderer::RecreateFramebuffers() {

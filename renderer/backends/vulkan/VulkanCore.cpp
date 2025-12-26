@@ -395,3 +395,21 @@ uint32_t VulkanCore::GetPresentQueueFamily() const {
 const vk::raii::Device& VulkanCore::GetRaiiDevice() const {
     return _device;
 }
+
+const vk::raii::PhysicalDevice& VulkanCore::GetRaiiPhysicalDevice() const {
+    return _physicalDevice;
+}
+
+uint32_t VulkanCore::FindMemoryType(uint32_t typeFilter,
+                                    vk::MemoryPropertyFlags properties) const {
+    auto memProperties = _physicalDevice.getMemoryProperties();
+
+    for (uint32_t i = 0; i < memProperties.memoryTypeCount; ++i) {
+        if ((typeFilter & (1 << i)) &&
+            (memProperties.memoryTypes[i].propertyFlags & properties) == properties) {
+            return i;
+        }
+    }
+
+    throw std::runtime_error("Failed to find suitable memory type!");
+}
