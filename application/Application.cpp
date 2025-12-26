@@ -112,8 +112,8 @@ void Application::DispatchFileDropped(const std::string& filename, uint8_t* data
     OnFileDropped(filename, data, length);
 }
 
-Application::Application(uint32_t width, uint32_t height, const char* title) :
-    _width(width), _height(height), _title(title) {
+Application::Application(uint32_t windowWidth, uint32_t windowHeight, const char* title) :
+    _initialWindowWidth(windowWidth), _initialWindowHeight(windowHeight), _title(title) {
     assert(!s_instance);
     s_instance = this;
 }
@@ -136,12 +136,19 @@ void Application::Run() {
     }
 
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    _window = glfwCreateWindow(static_cast<int>(_width), static_cast<int>(_height), _title, nullptr,
-                               nullptr);
+    _window = glfwCreateWindow(static_cast<int>(_initialWindowWidth),
+                               static_cast<int>(_initialWindowHeight), _title, nullptr, nullptr);
     if (!_window) {
         glfwTerminate();
         return;
     }
+
+    // Query the actual framebuffer size (handles HiDPI/Retina displays)
+    int fbWidth = 0;
+    int fbHeight = 0;
+    glfwGetFramebufferSize(_window, &fbWidth, &fbHeight);
+    _framebufferWidth = static_cast<uint32_t>(fbWidth);
+    _framebufferHeight = static_cast<uint32_t>(fbHeight);
 
     glfwSetKeyCallback(_window, []([[maybe_unused]] GLFWwindow* window, int key,
                                    [[maybe_unused]] int scancode, int action, int mods) {
@@ -175,8 +182,8 @@ void Application::Run() {
                                        const int clampedWidth = (width > 0) ? width : 0;
                                        const int clampedHeight = (height > 0) ? height : 0;
 
-                                       app->_width = static_cast<uint32_t>(clampedWidth);
-                                       app->_height = static_cast<uint32_t>(clampedHeight);
+                                       app->_framebufferWidth = static_cast<uint32_t>(clampedWidth);
+                                       app->_framebufferHeight = static_cast<uint32_t>(clampedHeight);
                                        app->OnResize(clampedWidth, clampedHeight);
                                    });
 

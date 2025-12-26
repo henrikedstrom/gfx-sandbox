@@ -32,8 +32,8 @@ class Application {
   protected:
     // Accessors
     GLFWwindow* GetWindow() const noexcept { return _window; }
-    uint32_t GetWidth() const noexcept { return _width; }
-    uint32_t GetHeight() const noexcept { return _height; }
+    uint32_t GetWidth() const noexcept { return _framebufferWidth; }
+    uint32_t GetHeight() const noexcept { return _framebufferHeight; }
 
     // App hooks (override in derived apps)
     virtual void OnInit() {}
@@ -53,8 +53,10 @@ class Application {
     static Application* s_instance;
 
     // Private member variables
-    uint32_t _width{0};
-    uint32_t _height{0};
+    uint32_t _initialWindowWidth{0};   // Initial window size (screen coordinates, for creation only)
+    uint32_t _initialWindowHeight{0};
+    uint32_t _framebufferWidth{0};     // Framebuffer size in pixels (for rendering)
+    uint32_t _framebufferHeight{0};
     const char* _title{nullptr};
     bool _quitApp{false};
     GLFWwindow* _window{nullptr};
