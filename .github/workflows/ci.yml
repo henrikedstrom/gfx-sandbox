@@ -46,6 +46,12 @@ jobs:
             libxkbcommon-dev \
             libgl1-mesa-dev
 
+      - name: Install Vulkan SDK
+        uses: humbletim/install-vulkan-sdk@v1.2
+        with:
+          version: 1.4.309.0
+          cache: true
+
       - name: Cache CMake dependencies (FetchContent)
         uses: actions/cache@v4
         with:
@@ -55,7 +61,7 @@ jobs:
             ${{ runner.os }}-cmake-deps-${{ matrix.build_type }}-
 
       - name: Configure CMake
-        run: cmake -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DENABLE_WEBGPU=ON -DENABLE_VULKAN=OFF -S . -B build-${{ matrix.build_type }}
+        run: cmake -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DENABLE_WEBGPU=ON -DENABLE_VULKAN=ON -S . -B build-${{ matrix.build_type }}
 
       - name: Build
         run: cmake --build build-${{ matrix.build_type }} --config ${{ matrix.build_type }} --parallel 4
