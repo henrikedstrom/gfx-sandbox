@@ -59,7 +59,7 @@ std::vector<const char*> GetRequiredInstanceExtensions() {
     std::vector<const char*> extensions(glfwExtensions, glfwExtensions + glfwExtensionCount);
 
     // Add debug utils extension for validation layer messages
-    if (kEnableValidationLayers) {
+    if constexpr (kEnableValidationLayers) {
         extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
     }
 
@@ -221,8 +221,10 @@ VulkanCore::VulkanCore(GLFWwindow* window) {
     VULKAN_HPP_DEFAULT_DISPATCHER.init(_context.getDispatcher()->vkGetInstanceProcAddr);
 
     // Create the Vulkan instance.
-    if (kEnableValidationLayers && !CheckValidationLayerSupport()) {
-        throw std::runtime_error("Validation layers requested but not available.");
+    if constexpr (kEnableValidationLayers) {
+        if (!CheckValidationLayerSupport()) {
+            throw std::runtime_error("Validation layers requested but not available.");
+        }
     }
 
     vk::ApplicationInfo appInfo{};
@@ -245,7 +247,7 @@ VulkanCore::VulkanCore(GLFWwindow* window) {
 
     // Chain debug messenger for instance creation/destruction messages
     vk::DebugUtilsMessengerCreateInfoEXT debugCreateInfo{};
-    if (kEnableValidationLayers) {
+    if constexpr (kEnableValidationLayers) {
         createInfo.setEnabledLayerCount(static_cast<uint32_t>(kValidationLayers.size()));
         createInfo.setPpEnabledLayerNames(kValidationLayers.data());
         debugCreateInfo = MakeDebugMessengerCreateInfo();
@@ -258,7 +260,7 @@ VulkanCore::VulkanCore(GLFWwindow* window) {
     VULKAN_HPP_DEFAULT_DISPATCHER.init(*_instance);
 
     // Create debug messenger (only in debug builds)
-    if (kEnableValidationLayers) {
+    if constexpr (kEnableValidationLayers) {
         _debugMessenger =
             vk::raii::DebugUtilsMessengerEXT(_instance, MakeDebugMessengerCreateInfo());
     }
