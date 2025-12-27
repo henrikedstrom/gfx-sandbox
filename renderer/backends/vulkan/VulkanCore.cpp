@@ -23,12 +23,13 @@ namespace {
 
 //----------------------------------------------------------------------
 // Validation Layer Configuration
+//
+// Validation functions only compiled in Debug; if constexpr eliminates calls in Release.
 
 #if defined(NDEBUG)
 constexpr bool kEnableValidationLayers = false;
 #else
 constexpr bool kEnableValidationLayers = true;
-#endif
 
 const std::vector<const char*> kValidationLayers = {"VK_LAYER_KHRONOS_validation"};
 
@@ -48,6 +49,7 @@ bool CheckValidationLayerSupport() {
     }
     return true;
 }
+#endif
 
 //----------------------------------------------------------------------
 // Required Extensions
@@ -72,8 +74,9 @@ std::vector<const char*> GetRequiredInstanceExtensions() {
 }
 
 //----------------------------------------------------------------------
-// Debug Messenger Callback
+// Debug Messenger Callback (debug builds only)
 
+#if !defined(NDEBUG)
 VkBool32 DebugMessengerCallback(vk::DebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
     [[maybe_unused]] vk::DebugUtilsMessageTypeFlagsEXT messageTypes,
     const vk::DebugUtilsMessengerCallbackDataEXT* pCallbackData, [[maybe_unused]] void* pUserData) {
@@ -95,6 +98,7 @@ vk::DebugUtilsMessengerCreateInfoEXT MakeDebugMessengerCreateInfo() {
     createInfo.pfnUserCallback = DebugMessengerCallback;
     return createInfo;
 }
+#endif
 
 //----------------------------------------------------------------------
 // Device Extensions
