@@ -5,7 +5,6 @@
 
 // Standard Library Headers
 #include <chrono>
-#include <cstdint>
 #include <string>
 
 // Forward Declarations
@@ -16,7 +15,7 @@ class Application {
   public:
     static Application* GetInstance();
 
-    explicit Application(uint32_t width, uint32_t height, const char* title = "gfx-sandbox");
+    explicit Application(int width, int height, const char* title = "gfx-sandbox");
     virtual ~Application();
 
     // Non-copyable and non-movable
@@ -35,8 +34,8 @@ class Application {
   protected:
     // Accessors
     GLFWwindow* GetWindow() const noexcept { return _window; }
-    uint32_t GetWidth() const noexcept { return _framebufferWidth; }
-    uint32_t GetHeight() const noexcept { return _framebufferHeight; }
+    int GetWidth() const noexcept { return _framebufferWidth; }
+    int GetHeight() const noexcept { return _framebufferHeight; }
 
     // App hooks (override in derived apps)
     virtual void OnInit() {}
@@ -56,10 +55,10 @@ class Application {
     static Application* s_instance;
 
     // Private member variables
-    uint32_t _initialWindowWidth{0};   // Initial window size (screen coordinates, for creation only)
-    uint32_t _initialWindowHeight{0};
-    uint32_t _framebufferWidth{0};     // Framebuffer size in pixels (for rendering)
-    uint32_t _framebufferHeight{0};
+    int _initialWindowWidth{0};   // Initial window size (screen coordinates, for creation only)
+    int _initialWindowHeight{0};
+    int _framebufferWidth{0};     // Framebuffer size in pixels (for rendering)
+    int _framebufferHeight{0};
     const char* _title{nullptr};
     bool _quitApp{false};
     GLFWwindow* _window{nullptr};

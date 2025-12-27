@@ -2,9 +2,7 @@
 #include "Application.h"
 
 // Standard Library Headers
-#include <algorithm>
 #include <cassert>
-#include <cctype>
 
 // Third-Party Library Headers
 #include <GLFW/glfw3.h>
@@ -112,7 +110,7 @@ void Application::DispatchFileDropped(const std::string& filename, uint8_t* data
     OnFileDropped(filename, data, length);
 }
 
-Application::Application(uint32_t windowWidth, uint32_t windowHeight, const char* title) :
+Application::Application(int windowWidth, int windowHeight, const char* title) :
     _initialWindowWidth(windowWidth), _initialWindowHeight(windowHeight), _title(title) {
     assert(!s_instance);
     s_instance = this;
@@ -136,19 +134,14 @@ void Application::Run() {
     }
 
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    _window = glfwCreateWindow(static_cast<int>(_initialWindowWidth),
-                               static_cast<int>(_initialWindowHeight), _title, nullptr, nullptr);
+    _window = glfwCreateWindow(_initialWindowWidth, _initialWindowHeight, _title, nullptr, nullptr);
     if (!_window) {
         glfwTerminate();
         return;
     }
 
     // Query the actual framebuffer size (handles HiDPI/Retina displays)
-    int fbWidth = 0;
-    int fbHeight = 0;
-    glfwGetFramebufferSize(_window, &fbWidth, &fbHeight);
-    _framebufferWidth = static_cast<uint32_t>(fbWidth);
-    _framebufferHeight = static_cast<uint32_t>(fbHeight);
+    glfwGetFramebufferSize(_window, &_framebufferWidth, &_framebufferHeight);
 
     glfwSetKeyCallback(_window, []([[maybe_unused]] GLFWwindow* window, int key,
                                    [[maybe_unused]] int scancode, int action, int mods) {
@@ -178,13 +171,9 @@ void Application::Run() {
                                        if (!app) {
                                            return;
                                        }
-                                       // Clamp non-positive sizes before casting to unsigned.
-                                       const int clampedWidth = (width > 0) ? width : 0;
-                                       const int clampedHeight = (height > 0) ? height : 0;
-
-                                       app->_framebufferWidth = static_cast<uint32_t>(clampedWidth);
-                                       app->_framebufferHeight = static_cast<uint32_t>(clampedHeight);
-                                       app->OnResize(clampedWidth, clampedHeight);
+                                       app->_framebufferWidth = width;
+                                       app->_framebufferHeight = height;
+                                       app->OnResize(width, height);
                                    });
 
 #if defined(__EMSCRIPTEN__)
