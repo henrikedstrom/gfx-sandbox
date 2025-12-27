@@ -42,6 +42,11 @@ class VulkanCore final {
     // Memory utilities
     uint32_t FindMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties) const;
 
+    // Buffer creation helper
+    void CreateBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage,
+                      vk::MemoryPropertyFlags properties, vk::raii::Buffer& buffer,
+                      vk::raii::DeviceMemory& bufferMemory) const;
+
   private:
     // Core Vulkan objects managed via RAII wrappers.
     // Order matters: destruction occurs in reverse order of declaration.

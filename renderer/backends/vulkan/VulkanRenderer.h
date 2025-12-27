@@ -10,6 +10,9 @@
 #include <memory>
 #include <vector>
 
+// Third-Party Library Headers
+#include <glm/glm.hpp>
+
 // Project Headers
 #include "IRenderer.h"
 
@@ -38,6 +41,16 @@ class VulkanRenderer final : public IRenderer {
     void UpdateEnvironment(const Environment& environment) override;
 
   private:
+    // Uniform data structures (must match shader layout)
+    struct GlobalUniforms {
+        alignas(16) glm::mat4 viewMatrix;
+        alignas(16) glm::mat4 projectionMatrix;
+        alignas(16) glm::mat4 inverseViewMatrix;
+        alignas(16) glm::mat4 inverseProjectionMatrix;
+        alignas(16) glm::vec3 cameraPosition;
+        float _pad{0.0f};
+    };
+
     // Initialization helpers
     void CreateRenderPass();
     void CreateFramebuffers();
@@ -45,10 +58,18 @@ class VulkanRenderer final : public IRenderer {
     void CreateCommandBuffers();
     void CreateSyncObjects();
     void CreateDepthResources();
+    void CreateUniformBuffers();
+    void CreateDescriptorSetLayout();
+    void CreateDescriptorPool();
+    void CreateDescriptorSets();
     void CreatePipelineLayout();
     void CreateGraphicsPipeline();
+    void CreatePlaceholderCubemap();
     void RecreateFramebuffers();
     void UpdateSwapchainSyncObjects();
+
+    // Runtime helpers
+    void UpdateUniforms(const glm::mat4& modelMatrix, const CameraUniformsInput& camera);
 
     // Utility functions
     vk::Format FindDepthFormat() const;
@@ -71,6 +92,22 @@ class VulkanRenderer final : public IRenderer {
     // Pipeline
     vk::raii::PipelineLayout _pipelineLayout{nullptr};
     vk::raii::Pipeline _graphicsPipeline{nullptr};
+
+    // Descriptors
+    vk::raii::DescriptorSetLayout _globalDescriptorSetLayout{nullptr};
+    vk::raii::DescriptorPool _descriptorPool{nullptr};
+    std::vector<vk::raii::DescriptorSet> _globalDescriptorSets;
+
+    // Uniform buffers (one per frame in flight)
+    std::vector<vk::raii::Buffer> _globalUniformBuffers;
+    std::vector<vk::raii::DeviceMemory> _globalUniformBuffersMemory;
+    std::vector<void*> _globalUniformBuffersMapped;
+
+    // Placeholder environment cubemap (until real environment loading is implemented)
+    vk::raii::Image _placeholderCubemap{nullptr};
+    vk::raii::DeviceMemory _placeholderCubemapMemory{nullptr};
+    vk::raii::ImageView _placeholderCubemapView{nullptr};
+    vk::raii::Sampler _cubemapSampler{nullptr};
 
     // Command pool and buffers
     vk::raii::CommandPool _commandPool{nullptr};

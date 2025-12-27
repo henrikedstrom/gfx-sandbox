@@ -24,12 +24,13 @@ namespace {
 //----------------------------------------------------------------------
 // Validation Layer Configuration
 //
-// Validation functions only compiled in Debug; if constexpr eliminates calls in Release.
+// Enabled by default in Debug builds. TODO: Make this a cvar later.
 
 #if defined(NDEBUG)
-constexpr bool kEnableValidationLayers = false;
+bool enableValidationLayers = false;
 #else
-constexpr bool kEnableValidationLayers = true;
+bool enableValidationLayers = true;
+#endif
 
 const std::vector<const char*> kValidationLayers = {"VK_LAYER_KHRONOS_validation"};
 
@@ -49,7 +50,6 @@ bool CheckValidationLayerSupport() {
     }
     return true;
 }
-#endif
 
 //----------------------------------------------------------------------
 // Required Extensions
@@ -61,7 +61,7 @@ std::vector<const char*> GetRequiredInstanceExtensions() {
     std::vector<const char*> extensions(glfwExtensions, glfwExtensions + glfwExtensionCount);
 
     // Add debug utils extension for validation layer messages
-    if constexpr (kEnableValidationLayers) {
+    if (enableValidationLayers) {
         extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
     }
 
@@ -74,9 +74,8 @@ std::vector<const char*> GetRequiredInstanceExtensions() {
 }
 
 //----------------------------------------------------------------------
-// Debug Messenger Callback (debug builds only)
+// Debug Messenger Callback
 
-#if !defined(NDEBUG)
 VkBool32 DebugMessengerCallback(vk::DebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
     [[maybe_unused]] vk::DebugUtilsMessageTypeFlagsEXT messageTypes,
     const vk::DebugUtilsMessengerCallbackDataEXT* pCallbackData, [[maybe_unused]] void* pUserData) {
@@ -98,7 +97,6 @@ vk::DebugUtilsMessengerCreateInfoEXT MakeDebugMessengerCreateInfo() {
     createInfo.pfnUserCallback = DebugMessengerCallback;
     return createInfo;
 }
-#endif
 
 //----------------------------------------------------------------------
 // Device Extensions
@@ -225,10 +223,8 @@ VulkanCore::VulkanCore(GLFWwindow* window) {
     VULKAN_HPP_DEFAULT_DISPATCHER.init(_context.getDispatcher()->vkGetInstanceProcAddr);
 
     // Create the Vulkan instance.
-    if constexpr (kEnableValidationLayers) {
-        if (!CheckValidationLayerSupport()) {
-            throw std::runtime_error("Validation layers requested but not available.");
-        }
+    if (enableValidationLayers && !CheckValidationLayerSupport()) {
+        throw std::runtime_error("Validation layers requested but not available.");
     }
 
     vk::ApplicationInfo appInfo{};
@@ -250,11 +246,11 @@ VulkanCore::VulkanCore(GLFWwindow* window) {
         extensions.data()};                       // ppEnabledExtensionNames
 
     // Chain debug messenger for instance creation/destruction messages
-    vk::DebugUtilsMessengerCreateInfoEXT debugCreateInfo{};
-    if constexpr (kEnableValidationLayers) {
+    vk::DebugUtilsMessengerCreateInfoEXT debugCreateInfo;
+    if (enableValidationLayers) {
+        debugCreateInfo = MakeDebugMessengerCreateInfo();
         createInfo.setEnabledLayerCount(static_cast<uint32_t>(kValidationLayers.size()));
         createInfo.setPpEnabledLayerNames(kValidationLayers.data());
-        debugCreateInfo = MakeDebugMessengerCreateInfo();
         createInfo.setPNext(&debugCreateInfo);
     }
 
@@ -263,8 +259,8 @@ VulkanCore::VulkanCore(GLFWwindow* window) {
     // Load instance-level functions into the dispatcher
     VULKAN_HPP_DEFAULT_DISPATCHER.init(*_instance);
 
-    // Create debug messenger (only in debug builds)
-    if constexpr (kEnableValidationLayers) {
+    // Create debug messenger
+    if (enableValidationLayers) {
         _debugMessenger =
             vk::raii::DebugUtilsMessengerEXT(_instance, MakeDebugMessengerCreateInfo());
     }
@@ -408,4 +404,43 @@ uint32_t VulkanCore::FindMemoryType(uint32_t typeFilter,
     }
 
     throw std::runtime_error("Failed to find suitable memory type!");
+}
+
+void VulkanCore::CreateBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage,
+                              vk::MemoryPropertyFlags properties, vk::raii::Buffer& buffer,
+                              vk::raii::DeviceMemory& bufferMemory) const {
+    if (size == 0) {
+        VK_LOG_ERROR("CreateBuffer called with size 0");
+        throw std::runtime_error("CreateBuffer: size must be greater than 0");
+    }
+
+    // Create the buffer
+    vk::BufferCreateInfo bufferInfo{};
+    bufferInfo.size = size;
+    bufferInfo.usage = usage;
+    bufferInfo.sharingMode = vk::SharingMode::eExclusive;
+
+    try {
+        buffer = _device.createBuffer(bufferInfo);
+    } catch (const vk::SystemError& e) {
+        VK_LOG_ERROR("Failed to create buffer ({} bytes): {}", size, e.what());
+        throw;
+    }
+
+    // Allocate memory for the buffer
+    vk::MemoryRequirements memRequirements = buffer.getMemoryRequirements();
+
+    vk::MemoryAllocateInfo allocInfo{};
+    allocInfo.allocationSize = memRequirements.size;
+    allocInfo.memoryTypeIndex = FindMemoryType(memRequirements.memoryTypeBits, properties);
+
+    try {
+        bufferMemory = _device.allocateMemory(allocInfo);
+    } catch (const vk::SystemError& e) {
+        VK_LOG_ERROR("Failed to allocate buffer memory ({} bytes): {}", memRequirements.size,
+                     e.what());
+        throw;
+    }
+
+    buffer.bindMemory(*bufferMemory, 0);
 }

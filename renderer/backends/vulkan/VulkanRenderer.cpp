@@ -3,8 +3,14 @@
 
 // Standard Library Headers
 #include <array>
+#include <cstring>
 #include <filesystem>
 #include <memory>
+
+// Third-Party Library Headers
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE
+#define GLM_FORCE_RIGHT_HANDED
+#include <glm/ext.hpp>
 
 // Project Headers
 #include "BackendRegistry.h"
@@ -38,10 +44,15 @@ void VulkanRenderer::Initialize(GLFWwindow* window, [[maybe_unused]] const Envir
 
     CreateDepthResources();
     CreateRenderPass();
+    CreateCommandPool();
+    CreateUniformBuffers();
+    CreatePlaceholderCubemap();
+    CreateDescriptorSetLayout();
+    CreateDescriptorPool();
+    CreateDescriptorSets();
     CreatePipelineLayout();
     CreateGraphicsPipeline();
     CreateFramebuffers();
-    CreateCommandPool();
     CreateCommandBuffers();
     CreateSyncObjects();
 
@@ -73,8 +84,7 @@ void VulkanRenderer::Resize() {
     }
 }
 
-void VulkanRenderer::Render([[maybe_unused]] const glm::mat4& modelMatrix,
-                            [[maybe_unused]] const CameraUniformsInput& camera) {
+void VulkanRenderer::Render(const glm::mat4& modelMatrix, const CameraUniformsInput& camera) {
     const auto device = _core->GetDevice();
 
     // Wait for the previous frame using this slot to finish
@@ -106,6 +116,9 @@ void VulkanRenderer::Render([[maybe_unused]] const glm::mat4& modelMatrix,
         Resize();
         return;
     }
+
+    // Update uniforms for this frame
+    UpdateUniforms(modelMatrix, camera);
 
     // Reset the fence only when we're sure we'll submit work
     device.resetFences(*_inFlightFences[_currentFrame]);
@@ -149,8 +162,10 @@ void VulkanRenderer::Render([[maybe_unused]] const glm::mat4& modelMatrix,
     scissor.extent = extent;
     cmd.setScissor(0, scissor);
 
-    // Bind pipeline and draw fullscreen triangle
+    // Bind pipeline and descriptor set, then draw fullscreen triangle
     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *_graphicsPipeline);
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *_pipelineLayout, 0,
+                           *_globalDescriptorSets[_currentFrame], nullptr);
     cmd.draw(3, 1, 0, 0);
 
     cmd.endRenderPass();
@@ -421,10 +436,12 @@ void VulkanRenderer::UpdateSwapchainSyncObjects() {
 }
 
 void VulkanRenderer::CreatePipelineLayout() {
-    // Empty layout for now (no descriptor sets or push constants)
+    // Pipeline layout with global descriptor set
+    vk::DescriptorSetLayout setLayouts[] = {*_globalDescriptorSetLayout};
+
     vk::PipelineLayoutCreateInfo layoutInfo{};
-    layoutInfo.setLayoutCount = 0;
-    layoutInfo.pSetLayouts = nullptr;
+    layoutInfo.setLayoutCount = 1;
+    layoutInfo.pSetLayouts = setLayouts;
     layoutInfo.pushConstantRangeCount = 0;
     layoutInfo.pPushConstantRanges = nullptr;
 
@@ -435,9 +452,9 @@ void VulkanRenderer::CreateGraphicsPipeline() {
     const auto& device = _core->GetRaiiDevice();
     const std::filesystem::path shaderPath{GFX_VULKAN_SHADER_PATH};
 
-    // Load shader modules
-    auto vertModule = vkshader::LoadShaderModule(device, shaderPath / "simple.vert.spv");
-    auto fragModule = vkshader::LoadShaderModule(device, shaderPath / "simple.frag.spv");
+    // Load shader modules (environment shaders with GlobalUniforms)
+    auto vertModule = vkshader::LoadShaderModule(device, shaderPath / "environment.vert.spv");
+    auto fragModule = vkshader::LoadShaderModule(device, shaderPath / "environment.frag.spv");
 
     if (!*vertModule || !*fragModule) {
         throw std::runtime_error("Failed to load shader modules");
@@ -526,4 +543,248 @@ void VulkanRenderer::CreateGraphicsPipeline() {
     _graphicsPipeline = device.createGraphicsPipeline(nullptr, pipelineInfo);
 
     VK_LOG_INFO("Graphics pipeline created.");
+}
+
+void VulkanRenderer::CreateUniformBuffers() {
+    const vk::DeviceSize bufferSize = sizeof(GlobalUniforms);
+
+    _globalUniformBuffers.reserve(vkbackend::kMaxFramesInFlight);
+    _globalUniformBuffersMemory.reserve(vkbackend::kMaxFramesInFlight);
+    _globalUniformBuffersMapped.resize(vkbackend::kMaxFramesInFlight);
+
+    for (uint32_t i = 0; i < vkbackend::kMaxFramesInFlight; ++i) {
+        vk::raii::Buffer buffer{nullptr};
+        vk::raii::DeviceMemory memory{nullptr};
+
+        _core->CreateBuffer(bufferSize, vk::BufferUsageFlagBits::eUniformBuffer,
+                            vk::MemoryPropertyFlagBits::eHostVisible |
+                                vk::MemoryPropertyFlagBits::eHostCoherent,
+                            buffer, memory);
+
+        // Map the buffer persistently
+        _globalUniformBuffersMapped[i] = memory.mapMemory(0, bufferSize);
+
+        _globalUniformBuffers.push_back(std::move(buffer));
+        _globalUniformBuffersMemory.push_back(std::move(memory));
+    }
+
+    VK_LOG_INFO("Uniform buffers created ({} frames).", vkbackend::kMaxFramesInFlight);
+}
+
+void VulkanRenderer::CreateDescriptorSetLayout() {
+    // Binding 0: GlobalUniforms uniform buffer
+    vk::DescriptorSetLayoutBinding uboLayoutBinding{};
+    uboLayoutBinding.binding = 0;
+    uboLayoutBinding.descriptorType = vk::DescriptorType::eUniformBuffer;
+    uboLayoutBinding.descriptorCount = 1;
+    uboLayoutBinding.stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment;
+    uboLayoutBinding.pImmutableSamplers = nullptr;
+
+    // Binding 1: Environment cubemap sampler (placeholder for now)
+    vk::DescriptorSetLayoutBinding samplerLayoutBinding{};
+    samplerLayoutBinding.binding = 1;
+    samplerLayoutBinding.descriptorType = vk::DescriptorType::eCombinedImageSampler;
+    samplerLayoutBinding.descriptorCount = 1;
+    samplerLayoutBinding.stageFlags = vk::ShaderStageFlagBits::eFragment;
+    samplerLayoutBinding.pImmutableSamplers = nullptr;
+
+    std::array bindings = {uboLayoutBinding, samplerLayoutBinding};
+
+    vk::DescriptorSetLayoutCreateInfo layoutInfo{};
+    layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
+    layoutInfo.pBindings = bindings.data();
+
+    _globalDescriptorSetLayout = _core->GetRaiiDevice().createDescriptorSetLayout(layoutInfo);
+
+    VK_LOG_INFO("Descriptor set layout created.");
+}
+
+void VulkanRenderer::CreateDescriptorPool() {
+    std::array<vk::DescriptorPoolSize, 2> poolSizes{};
+
+    // Uniform buffers
+    poolSizes[0].type = vk::DescriptorType::eUniformBuffer;
+    poolSizes[0].descriptorCount = vkbackend::kMaxFramesInFlight;
+
+    // Combined image samplers (for environment map)
+    poolSizes[1].type = vk::DescriptorType::eCombinedImageSampler;
+    poolSizes[1].descriptorCount = vkbackend::kMaxFramesInFlight;
+
+    vk::DescriptorPoolCreateInfo poolInfo{};
+    poolInfo.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
+    poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
+    poolInfo.pPoolSizes = poolSizes.data();
+    poolInfo.maxSets = vkbackend::kMaxFramesInFlight;
+
+    _descriptorPool = _core->GetRaiiDevice().createDescriptorPool(poolInfo);
+
+    VK_LOG_INFO("Descriptor pool created.");
+}
+
+void VulkanRenderer::CreateDescriptorSets() {
+    // Create one descriptor set per frame in flight
+    std::vector<vk::DescriptorSetLayout> layouts(vkbackend::kMaxFramesInFlight,
+                                                  *_globalDescriptorSetLayout);
+
+    vk::DescriptorSetAllocateInfo allocInfo{};
+    allocInfo.descriptorPool = *_descriptorPool;
+    allocInfo.descriptorSetCount = vkbackend::kMaxFramesInFlight;
+    allocInfo.pSetLayouts = layouts.data();
+
+    _globalDescriptorSets = _core->GetRaiiDevice().allocateDescriptorSets(allocInfo);
+
+    // Update each descriptor set to point to its uniform buffer and cubemap
+    for (uint32_t i = 0; i < vkbackend::kMaxFramesInFlight; ++i) {
+        // Binding 0: Uniform buffer
+        vk::DescriptorBufferInfo bufferInfo{};
+        bufferInfo.buffer = *_globalUniformBuffers[i];
+        bufferInfo.offset = 0;
+        bufferInfo.range = sizeof(GlobalUniforms);
+
+        // Binding 1: Cubemap sampler
+        vk::DescriptorImageInfo imageInfo{};
+        imageInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+        imageInfo.imageView = *_placeholderCubemapView;
+        imageInfo.sampler = *_cubemapSampler;
+
+        std::array<vk::WriteDescriptorSet, 2> descriptorWrites{};
+
+        descriptorWrites[0].dstSet = *_globalDescriptorSets[i];
+        descriptorWrites[0].dstBinding = 0;
+        descriptorWrites[0].dstArrayElement = 0;
+        descriptorWrites[0].descriptorType = vk::DescriptorType::eUniformBuffer;
+        descriptorWrites[0].descriptorCount = 1;
+        descriptorWrites[0].pBufferInfo = &bufferInfo;
+
+        descriptorWrites[1].dstSet = *_globalDescriptorSets[i];
+        descriptorWrites[1].dstBinding = 1;
+        descriptorWrites[1].dstArrayElement = 0;
+        descriptorWrites[1].descriptorType = vk::DescriptorType::eCombinedImageSampler;
+        descriptorWrites[1].descriptorCount = 1;
+        descriptorWrites[1].pImageInfo = &imageInfo;
+
+        _core->GetDevice().updateDescriptorSets(descriptorWrites, nullptr);
+    }
+
+    VK_LOG_INFO("Descriptor sets created and updated.");
+}
+
+void VulkanRenderer::UpdateUniforms(const glm::mat4& /*modelMatrix*/,
+                                    const CameraUniformsInput& camera) {
+    GlobalUniforms ubo{};
+    ubo.viewMatrix = camera.viewMatrix;
+    ubo.projectionMatrix = camera.projectionMatrix;
+    ubo.inverseViewMatrix = glm::inverse(camera.viewMatrix);
+    ubo.inverseProjectionMatrix = glm::inverse(camera.projectionMatrix);
+    ubo.cameraPosition = camera.cameraPosition;
+
+    std::memcpy(_globalUniformBuffersMapped[_currentFrame], &ubo, sizeof(ubo));
+}
+
+void VulkanRenderer::CreatePlaceholderCubemap() {
+    const auto& device = _core->GetRaiiDevice();
+    const uint32_t size = 1; // 1x1 per face
+
+    // Create cubemap image
+    vk::ImageCreateInfo imageInfo{};
+    imageInfo.imageType = vk::ImageType::e2D;
+    imageInfo.extent.width = size;
+    imageInfo.extent.height = size;
+    imageInfo.extent.depth = 1;
+    imageInfo.mipLevels = 1;
+    imageInfo.arrayLayers = 6; // 6 faces for cubemap
+    imageInfo.format = vk::Format::eR8G8B8A8Unorm;
+    imageInfo.tiling = vk::ImageTiling::eOptimal;
+    imageInfo.initialLayout = vk::ImageLayout::eUndefined;
+    imageInfo.usage = vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst;
+    imageInfo.sharingMode = vk::SharingMode::eExclusive;
+    imageInfo.samples = vk::SampleCountFlagBits::e1;
+    imageInfo.flags = vk::ImageCreateFlagBits::eCubeCompatible;
+
+    _placeholderCubemap = device.createImage(imageInfo);
+
+    // Allocate memory
+    vk::MemoryRequirements memRequirements = _placeholderCubemap.getMemoryRequirements();
+
+    vk::MemoryAllocateInfo allocInfo{};
+    allocInfo.allocationSize = memRequirements.size;
+    allocInfo.memoryTypeIndex =
+        _core->FindMemoryType(memRequirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal);
+
+    _placeholderCubemapMemory = device.allocateMemory(allocInfo);
+    _placeholderCubemap.bindMemory(*_placeholderCubemapMemory, 0);
+
+    // Create image view
+    vk::ImageViewCreateInfo viewInfo{};
+    viewInfo.image = *_placeholderCubemap;
+    viewInfo.viewType = vk::ImageViewType::eCube;
+    viewInfo.format = vk::Format::eR8G8B8A8Unorm;
+    viewInfo.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+    viewInfo.subresourceRange.baseMipLevel = 0;
+    viewInfo.subresourceRange.levelCount = 1;
+    viewInfo.subresourceRange.baseArrayLayer = 0;
+    viewInfo.subresourceRange.layerCount = 6;
+
+    _placeholderCubemapView = device.createImageView(viewInfo);
+
+    // Create sampler
+    vk::SamplerCreateInfo samplerInfo{};
+    samplerInfo.magFilter = vk::Filter::eLinear;
+    samplerInfo.minFilter = vk::Filter::eLinear;
+    samplerInfo.addressModeU = vk::SamplerAddressMode::eClampToEdge;
+    samplerInfo.addressModeV = vk::SamplerAddressMode::eClampToEdge;
+    samplerInfo.addressModeW = vk::SamplerAddressMode::eClampToEdge;
+    samplerInfo.anisotropyEnable = VK_FALSE;
+    samplerInfo.maxAnisotropy = 1.0f;
+    samplerInfo.borderColor = vk::BorderColor::eIntOpaqueBlack;
+    samplerInfo.unnormalizedCoordinates = VK_FALSE;
+    samplerInfo.compareEnable = VK_FALSE;
+    samplerInfo.mipmapMode = vk::SamplerMipmapMode::eLinear;
+    samplerInfo.mipLodBias = 0.0f;
+    samplerInfo.minLod = 0.0f;
+    samplerInfo.maxLod = 0.0f;
+
+    _cubemapSampler = device.createSampler(samplerInfo);
+
+    // Transition image layout to shader read optimal using a one-time command buffer
+    vk::CommandBufferAllocateInfo cmdAllocInfo{};
+    cmdAllocInfo.level = vk::CommandBufferLevel::ePrimary;
+    cmdAllocInfo.commandPool = *_commandPool;
+    cmdAllocInfo.commandBufferCount = 1;
+
+    auto cmdBuffers = device.allocateCommandBuffers(cmdAllocInfo);
+    auto& cmd = cmdBuffers[0];
+
+    vk::CommandBufferBeginInfo beginInfo{};
+    beginInfo.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+    cmd.begin(beginInfo);
+
+    vk::ImageMemoryBarrier barrier{};
+    barrier.oldLayout = vk::ImageLayout::eUndefined;
+    barrier.newLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = *_placeholderCubemap;
+    barrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+    barrier.subresourceRange.baseMipLevel = 0;
+    barrier.subresourceRange.levelCount = 1;
+    barrier.subresourceRange.baseArrayLayer = 0;
+    barrier.subresourceRange.layerCount = 6;
+    barrier.srcAccessMask = vk::AccessFlagBits::eNone;
+    barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
+
+    cmd.pipelineBarrier(vk::PipelineStageFlagBits::eTopOfPipe,
+                        vk::PipelineStageFlagBits::eFragmentShader, {}, nullptr, nullptr, barrier);
+
+    cmd.end();
+
+    vk::SubmitInfo submitInfo{};
+    vk::CommandBuffer cmdBuf = *cmd;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &cmdBuf;
+
+    _core->GetGraphicsQueue().submit(submitInfo);
+    _core->GetDevice().waitIdle();
+
+    VK_LOG_INFO("Placeholder cubemap created ({}x{} per face).", size, size);
 }
