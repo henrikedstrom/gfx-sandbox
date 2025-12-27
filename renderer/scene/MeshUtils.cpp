@@ -20,18 +20,18 @@ struct MeshData {
     uint32_t _indexCount{0};
 };
 
-// Returns the number of faces (triangles)
+// Returns the number of faces (triangles).
 int getNumFaces(const SMikkTSpaceContext* pContext) {
     MeshData* mesh = static_cast<MeshData*>(pContext->m_pUserData);
     return static_cast<int>(mesh->_indexCount / 3);
 }
 
-// Each face in a triangle mesh always has 3 vertices
+// Each face in a triangle mesh always has 3 vertices.
 int getNumVerticesOfFace(const SMikkTSpaceContext*, const int) {
     return 3;
 }
 
-// Provides the position of the vertex for the given face and vertex index
+// Provides the position of the vertex for the given face and vertex index.
 void getPosition(const SMikkTSpaceContext* pContext, float position[3], const int face,
                  const int vert) {
     MeshData* mesh = static_cast<MeshData*>(pContext->m_pUserData);
@@ -42,7 +42,7 @@ void getPosition(const SMikkTSpaceContext* pContext, float position[3], const in
     position[2] = vertex._position.z;
 }
 
-// Provides the normal of the vertex
+// Provides the normal of the vertex.
 void getNormal(const SMikkTSpaceContext* pContext, float normal[3], const int face,
                const int vert) {
     MeshData* mesh = static_cast<MeshData*>(pContext->m_pUserData);
@@ -53,7 +53,7 @@ void getNormal(const SMikkTSpaceContext* pContext, float normal[3], const int fa
     normal[2] = vertex._normal.z;
 }
 
-// Provides the texture coordinate of the vertex
+// Provides the texture coordinate of the vertex.
 void getTexCoord(const SMikkTSpaceContext* pContext, float texCoord[2], const int face,
                  const int vert) {
     MeshData* mesh = static_cast<MeshData*>(pContext->m_pUserData);
@@ -63,10 +63,10 @@ void getTexCoord(const SMikkTSpaceContext* pContext, float texCoord[2], const in
     texCoord[1] = vertex._texCoord0.y;
 }
 
-// Called to set the computed tangent (and its sign for handedness)
+// Called to set the computed tangent (and its sign for handedness).
 void setTSpaceBasic(const SMikkTSpaceContext* pContext, const float tangent[3], const float sign,
                     const int face, const int vert) {
-    // Fetch the vertex data
+    // Fetch the vertex data.
     MeshData* mesh = static_cast<MeshData*>(pContext->m_pUserData);
     int index = (*mesh->_indices)[mesh->_firstIndex + face * 3 + vert];
     Model::Vertex& vertex = (*mesh->_vertices)[index];
@@ -75,15 +75,15 @@ void setTSpaceBasic(const SMikkTSpaceContext* pContext, const float tangent[3], 
     pContext->m_pInterface->m_getNormal(pContext, n, face, vert);
     glm::vec3 normal(n[0], n[1], n[2]);
 
-    // Normalize the computed tangent vector
+    // Normalize the computed tangent vector.
     glm::vec3 t = glm::normalize(glm::vec3(tangent[0], tangent[1], tangent[2]));
 
-    // Check if the computed tangent is sufficiently orthogonal to the normal
+    // Check if the computed tangent is sufficiently orthogonal to the normal.
     if (glm::abs(glm::dot(t, normal)) < 0.9f) {
         vertex._tangent = glm::vec4(tangent[0], tangent[1], tangent[2], -sign);
     } else {
         // Generate a fallback tangent that is orthogonal to the normal.
-        // Use a threshold to handle the singular case when the normal is nearly (0, 0, -1)
+        // Use a threshold to handle the singular case when the normal is nearly (0, 0, -1).
         constexpr float kSingularityThreshold = -0.99998796f;
         if (normal.z < kSingularityThreshold) {
             vertex._tangent = glm::vec4(0.0f, -1.0f, 0.0f, 1.0f);
@@ -102,7 +102,7 @@ void setTSpaceBasic(const SMikkTSpaceContext* pContext, const float tangent[3], 
 namespace mesh_utils {
 void GenerateTangents(const Model::SubMesh& subMesh, std::vector<Model::Vertex>& vertices,
                       std::vector<uint32_t>& indices) {
-    // Set up the MikkTSpace interface / function pointers
+    // Set up the MikkTSpace interface / function pointers.
     SMikkTSpaceInterface interface {};
     interface.m_getNumFaces = getNumFaces;
     interface.m_getNumVerticesOfFace = getNumVerticesOfFace;
@@ -111,7 +111,7 @@ void GenerateTangents(const Model::SubMesh& subMesh, std::vector<Model::Vertex>&
     interface.m_getTexCoord = getTexCoord;
     interface.m_setTSpaceBasic = setTSpaceBasic;
 
-    // Prepare the context
+    // Prepare the context.
     SMikkTSpaceContext context;
     MeshData meshData = {&vertices, &indices, subMesh._firstIndex, subMesh._indexCount};
     context.m_pUserData = &meshData;

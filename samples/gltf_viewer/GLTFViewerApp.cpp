@@ -61,7 +61,7 @@ void GltfViewerApp::OnInit() {
     _model.Load("./assets/models/DamagedHelmet.glb");
     RepositionCamera(_camera, _model);
 
-    // Create renderer via backend registry
+    // Create renderer via backend registry.
     _renderer = BackendRegistry::Instance().Create(_backendName);
     if (!_renderer) {
         std::cerr << "Failed to create renderer. Exiting." << std::endl;
@@ -71,14 +71,14 @@ void GltfViewerApp::OnInit() {
 
     _renderer->Initialize(GetWindow(), _environment, _model);
 
-    // Store the actual backend name (in case we used the default)
+    // Store the actual backend name (in case we used the default).
     if (_backendName.empty()) {
         _backendName = BackendRegistry::Instance().GetDefaultBackend();
     }
 }
 
 void GltfViewerApp::SwitchToNextBackend() {
-    // Get available backends and find the next one in the cycle
+    // Get available backends and find the next one in the cycle.
     auto backends = BackendRegistry::Instance().GetAvailableBackends();
     if (backends.size() <= 1) {
         std::cout << "No other backends available to switch to." << std::endl;
@@ -95,13 +95,13 @@ void GltfViewerApp::SwitchToNextBackend() {
 
     std::cout << "Switching backend: " << _backendName << " -> " << nextBackend << std::endl;
 
-    // Shutdown and release the current renderer
+    // Shutdown and release the current renderer.
     if (_renderer) {
         _renderer->Shutdown();
         _renderer.reset();
     }
 
-    // Create the new renderer
+    // Create the new renderer.
     _backendName = nextBackend;
     _renderer = BackendRegistry::Instance().Create(_backendName);
     if (!_renderer) {
@@ -109,7 +109,7 @@ void GltfViewerApp::SwitchToNextBackend() {
         return;
     }
 
-    // Initialize with the current model and environment
+    // Initialize with the current model and environment.
     _renderer->Initialize(GetWindow(), _environment, _model);
 }
 

@@ -55,17 +55,17 @@ bool CheckValidationLayerSupport() {
 // Required Extensions
 
 std::vector<const char*> GetRequiredInstanceExtensions() {
-    // Get extensions required by GLFW for surface creation
+    // Get extensions required by GLFW for surface creation.
     uint32_t glfwExtensionCount = 0;
     const char** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
     std::vector<const char*> extensions(glfwExtensions, glfwExtensions + glfwExtensionCount);
 
-    // Add debug utils extension for validation layer messages
+    // Add debug utils extension for validation layer messages.
     if (enableValidationLayers) {
         extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
     }
 
-    // Add portability enumeration for MoltenVK on macOS
+    // Add portability enumeration for MoltenVK on macOS.
 #if defined(__APPLE__)
     extensions.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
 #endif
@@ -104,10 +104,10 @@ vk::DebugUtilsMessengerCreateInfoEXT MakeDebugMessengerCreateInfo() {
 std::vector<const char*> GetRequiredDeviceExtensions() {
     std::vector<const char*> extensions;
 
-    // Swapchain extension is required for presentation
+    // Swapchain extension is required for presentation.
     extensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
 
-    // Portability subset extension for MoltenVK on macOS
+    // Portability subset extension for MoltenVK on macOS.
 #if defined(__APPLE__)
     extensions.push_back("VK_KHR_portability_subset");
 #endif
@@ -131,12 +131,12 @@ QueueFamilyIndices FindQueueFamilies(vk::PhysicalDevice device, vk::SurfaceKHR s
     auto queueFamilies = device.getQueueFamilyProperties();
 
     for (uint32_t i = 0; i < queueFamilies.size(); ++i) {
-        // Check for graphics support
+        // Check for graphics support.
         if (queueFamilies[i].queueFlags & vk::QueueFlagBits::eGraphics) {
             indices.graphicsFamily = i;
         }
 
-        // Check for present support
+        // Check for present support.
         if (device.getSurfaceSupportKHR(i, surface)) {
             indices.presentFamily = i;
         }
@@ -169,7 +169,7 @@ bool IsDeviceSuitable(vk::PhysicalDevice device, vk::SurfaceKHR surface) {
     QueueFamilyIndices indices = FindQueueFamilies(device, surface);
     bool extensionsSupported = CheckDeviceExtensionSupport(device);
 
-    // Check for swapchain support
+    // Check for swapchain support.
     bool swapchainAdequate = false;
     if (extensionsSupported) {
         auto formats = device.getSurfaceFormatsKHR(surface);
@@ -190,7 +190,7 @@ vk::PhysicalDevice SelectPhysicalDevice(vk::Instance instance, vk::SurfaceKHR su
         throw std::runtime_error("No Vulkan-compatible physical devices found.");
     }
 
-    // Prefer discrete GPU if available
+    // Prefer discrete GPU if available.
     for (const auto& device : devices) {
         if (IsDeviceSuitable(device, surface)) {
             auto properties = device.getProperties();
@@ -201,7 +201,7 @@ vk::PhysicalDevice SelectPhysicalDevice(vk::Instance instance, vk::SurfaceKHR su
         }
     }
 
-    // Fallback to any suitable device
+    // Fallback to any suitable device.
     for (const auto& device : devices) {
         if (IsDeviceSuitable(device, surface)) {
             auto properties = device.getProperties();
@@ -245,8 +245,8 @@ VulkanCore::VulkanCore(GLFWwindow* window) {
         static_cast<uint32_t>(extensions.size()), // enabledExtensionCount
         extensions.data()};                       // ppEnabledExtensionNames
 
-    // Chain debug messenger for instance creation/destruction messages
-    vk::DebugUtilsMessengerCreateInfoEXT debugCreateInfo;
+    // Chain debug messenger for instance creation/destruction messages.
+    vk::DebugUtilsMessengerCreateInfoEXT debugCreateInfo{};
     if (enableValidationLayers) {
         debugCreateInfo = MakeDebugMessengerCreateInfo();
         createInfo.setEnabledLayerCount(static_cast<uint32_t>(kValidationLayers.size()));
@@ -256,10 +256,10 @@ VulkanCore::VulkanCore(GLFWwindow* window) {
 
     _instance = vk::raii::Instance(_context, createInfo);
 
-    // Load instance-level functions into the dispatcher
+    // Load instance-level functions into the dispatcher.
     VULKAN_HPP_DEFAULT_DISPATCHER.init(*_instance);
 
-    // Create debug messenger
+    // Create debug messenger.
     if (enableValidationLayers) {
         _debugMessenger =
             vk::raii::DebugUtilsMessengerEXT(_instance, MakeDebugMessengerCreateInfo());
@@ -267,7 +267,7 @@ VulkanCore::VulkanCore(GLFWwindow* window) {
 
     VK_LOG_INFO("Instance created successfully.");
 
-    // Create window surface via GLFW
+    // Create window surface via GLFW.
     VkSurfaceKHR surfaceHandle = VK_NULL_HANDLE;
     vk::Result result =
         vk::Result(glfwCreateWindowSurface(static_cast<VkInstance>(*_instance), window,
@@ -278,15 +278,15 @@ VulkanCore::VulkanCore(GLFWwindow* window) {
         throw std::runtime_error("Failed to create GLFW window surface.");
     }
 
-    // Wrap the surface handle in a RAII wrapper
+    // Wrap the surface handle in a RAII wrapper.
     _surface = vk::raii::SurfaceKHR(_instance, vk::SurfaceKHR(surfaceHandle));
 
-    // Select physical device with required queue families
+    // Select physical device with required queue families.
     vk::PhysicalDevice selectedDevice = SelectPhysicalDevice(*_instance, *_surface);
     _physicalDevice =
         vk::raii::PhysicalDevice(_instance, static_cast<VkPhysicalDevice>(selectedDevice));
 
-    // Find queue family indices
+    // Find queue family indices.
     QueueFamilyIndices queueIndices = FindQueueFamilies(*_physicalDevice, *_surface);
 
     if (!queueIndices.isComplete()) {
@@ -299,12 +299,12 @@ VulkanCore::VulkanCore(GLFWwindow* window) {
     VK_LOG_INFO("Physical device selected. Graphics queue: {}, Present queue: {}",
                 _graphicsQueueFamily, _presentQueueFamily);
 
-    // Create logical device and retrieve queues
+    // Create logical device and retrieve queues.
 
-    // Collect unique queue families (graphics and present may be the same)
+    // Collect unique queue families (graphics and present may be the same).
     std::set<uint32_t> uniqueQueueFamilies = {_graphicsQueueFamily, _presentQueueFamily};
 
-    // Create QueueCreateInfos for each unique queue family
+    // Create QueueCreateInfos for each unique queue family.
     std::vector<vk::DeviceQueueCreateInfo> queueCreateInfos;
     float queuePriority = 1.0f;
 
@@ -316,14 +316,14 @@ VulkanCore::VulkanCore(GLFWwindow* window) {
         queueCreateInfos.push_back(queueCreateInfo);
     }
 
-    // Specify device features to enable
+    // Specify device features to enable.
     vk::PhysicalDeviceFeatures deviceFeatures{};
     // TODO: Enable features as needed here (e.g., samplerAnisotropy, geometryShader)
 
-    // Get required device extensions
+    // Get required device extensions.
     auto deviceExtensions = GetRequiredDeviceExtensions();
 
-    // Create device create info
+    // Create device create info.
     vk::DeviceCreateInfo deviceCreateInfo{};
     deviceCreateInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
     deviceCreateInfo.pQueueCreateInfos = queueCreateInfos.data();
@@ -331,13 +331,13 @@ VulkanCore::VulkanCore(GLFWwindow* window) {
     deviceCreateInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
     deviceCreateInfo.ppEnabledExtensionNames = deviceExtensions.data();
 
-    // Create the logical device
+    // Create the logical device.
     _device = vk::raii::Device(_physicalDevice, deviceCreateInfo);
 
-    // Load device-level functions into the dispatcher
+    // Load device-level functions into the dispatcher.
     VULKAN_HPP_DEFAULT_DISPATCHER.init(*_device);
 
-    // Retrieve queue handles from the device
+    // Retrieve queue handles from the device.
     _graphicsQueue = vk::raii::Queue(_device, _graphicsQueueFamily, 0);
     _presentQueue = vk::raii::Queue(_device, _presentQueueFamily, 0);
 
@@ -414,7 +414,7 @@ void VulkanCore::CreateBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage,
         throw std::runtime_error("CreateBuffer: size must be greater than 0");
     }
 
-    // Create the buffer
+    // Create the buffer.
     vk::BufferCreateInfo bufferInfo{};
     bufferInfo.size = size;
     bufferInfo.usage = usage;
@@ -427,7 +427,7 @@ void VulkanCore::CreateBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage,
         throw;
     }
 
-    // Allocate memory for the buffer
+    // Allocate memory for the buffer.
     vk::MemoryRequirements memRequirements = buffer.getMemoryRequirements();
 
     vk::MemoryAllocateInfo allocInfo{};

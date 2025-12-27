@@ -140,7 +140,7 @@ void Application::Run() {
         return;
     }
 
-    // Query the actual framebuffer size (handles HiDPI/Retina displays)
+    // Query the actual framebuffer size (handles HiDPI/Retina displays).
     glfwGetFramebufferSize(_window, &_framebufferWidth, &_framebufferHeight);
 
     glfwSetKeyCallback(_window, []([[maybe_unused]] GLFWwindow* window, int key,

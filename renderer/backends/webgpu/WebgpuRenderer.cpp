@@ -66,7 +66,7 @@ template <typename TextureInfo>
 void CreateTexture(const TextureInfo* textureInfo, wgpu::TextureFormat format,
                    glm::vec4 defaultValue, wgpu::Device device, MipmapGenerator& mipmapGenerator,
                    MipmapGenerator::MipKind kind, wgpu::Texture& texture) {
-    // Set default pixel value
+    // Set default pixel value.
     const uint8_t defaultPixel[4] = {static_cast<uint8_t>(defaultValue.r * 255.0f),
                                      static_cast<uint8_t>(defaultValue.g * 255.0f),
                                      static_cast<uint8_t>(defaultValue.b * 255.0f),
@@ -81,12 +81,12 @@ void CreateTexture(const TextureInfo* textureInfo, wgpu::TextureFormat format,
         data = textureInfo->_data.data();
     }
 
-    // Compute the number of mip levels
+    // Compute the number of mip levels.
     uint32_t mipLevelCount =
         static_cast<uint32_t>(std::floor(std::log2(std::max(width, height)))) + 1;
 
     if (kind == MipmapGenerator::MipKind::SRGB2D) {
-        // Create final SRGB texture directly with render attachment usage
+        // Create final SRGB texture directly with render attachment usage.
         wgpu::TextureDescriptor finalDesc{};
         finalDesc.size = {width, height, 1};
         finalDesc.format = format; // expected RGBA8UnormSrgb
@@ -95,7 +95,7 @@ void CreateTexture(const TextureInfo* textureInfo, wgpu::TextureFormat format,
         finalDesc.mipLevelCount = mipLevelCount;
         texture = device.CreateTexture(&finalDesc);
 
-        // Upload level 0
+        // Upload level 0.
         wgpu::TexelCopyTextureInfo destination{};
         destination.texture = texture;
         destination.mipLevel = 0;
@@ -110,10 +110,10 @@ void CreateTexture(const TextureInfo* textureInfo, wgpu::TextureFormat format,
         const size_t dataSize = static_cast<size_t>(4) * width * height * sizeof(uint8_t);
         device.GetQueue().WriteTexture(&destination, data, dataSize, &source, &finalDesc.size);
 
-        // Generate mips directly via render path
+        // Generate mips directly via render path.
         mipmapGenerator.GenerateMipmaps(texture, finalDesc.size, kind);
     } else {
-        // Create an intermediate texture for compute-based mip generation (UNORM)
+        // Create an intermediate texture for compute-based mip generation (UNORM).
         wgpu::TextureDescriptor textureDescriptor{};
         textureDescriptor.size = {width, height, 1};
         textureDescriptor.format = wgpu::TextureFormat::RGBA8Unorm;
@@ -124,7 +124,7 @@ void CreateTexture(const TextureInfo* textureInfo, wgpu::TextureFormat format,
 
         wgpu::Texture intermediateTexture = device.CreateTexture(&textureDescriptor);
 
-        // Upload the texture data to intermediate
+        // Upload the texture data to intermediate.
         wgpu::TexelCopyTextureInfo destination{};
         destination.texture = intermediateTexture;
         destination.mipLevel = 0;
@@ -140,18 +140,18 @@ void CreateTexture(const TextureInfo* textureInfo, wgpu::TextureFormat format,
         device.GetQueue().WriteTexture(&destination, data, dataSize, &source,
                                        &textureDescriptor.size);
 
-        // Generate mipmaps via compute (normal-aware or linear depending on kind)
+        // Generate mipmaps via compute (normal-aware or linear depending on kind).
         mipmapGenerator.GenerateMipmaps(intermediateTexture, textureDescriptor.size,
                                         kind == MipmapGenerator::MipKind::Normal2D
                                             ? MipmapGenerator::MipKind::Normal2D
                                             : MipmapGenerator::MipKind::LinearUNorm2D);
 
-        // Create the final texture (may be sRGB or UNORM depending on input format)
+        // Create the final texture (may be sRGB or UNORM depending on input format).
         textureDescriptor.format = format;
         textureDescriptor.usage = wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::CopyDst;
         wgpu::Texture finalTexture = device.CreateTexture(&textureDescriptor);
 
-        // Copy the intermediate texture to the final texture
+        // Copy the intermediate texture to the final texture.
         wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
 
         for (uint32_t level = 0; level < mipLevelCount; ++level) {
@@ -181,11 +181,11 @@ void CreateTexture(const TextureInfo* textureInfo, wgpu::TextureFormat format,
 void CreateEnvironmentTexture(wgpu::Device device, wgpu::TextureViewDimension type,
                               wgpu::Extent3D size, bool mipmapping, wgpu::Texture& texture,
                               wgpu::TextureView& textureView) {
-    // Compute the number of mip levels
+    // Compute the number of mip levels.
     const uint32_t mipLevelCount =
         mipmapping ? static_cast<uint32_t>(std::log2(std::max(size.width, size.height))) + 1 : 1;
 
-    // Create a WebGPU texture descriptor with mipmapping enabled
+    // Create a WebGPU texture descriptor with mipmapping enabled.
     wgpu::TextureDescriptor textureDescriptor{};
     textureDescriptor.size = size;
     textureDescriptor.format = wgpu::TextureFormat::RGBA16Float;
@@ -196,7 +196,7 @@ void CreateEnvironmentTexture(wgpu::Device device, wgpu::TextureViewDimension ty
 
     texture = device.CreateTexture(&textureDescriptor);
 
-    // Create a texture view covering all mip levels
+    // Create a texture view covering all mip levels.
     wgpu::TextureViewDescriptor viewDescriptor{};
     viewDescriptor.format = wgpu::TextureFormat::RGBA16Float;
     viewDescriptor.dimension = type;
@@ -215,15 +215,15 @@ void WebgpuRenderer::Initialize(GLFWwindow* window, const Environment& environme
                                 const Model& model) {
     _window = window;
 #if defined(GFX_USE_DAWN_NATIVE_PROC)
-    // Initialize Dawn proc table before creating WebGPU instance
-    // Only needed when using dawn_native/dawn_proc (Xcode generator workaround)
-    // For other generators, webgpu_dawn handles this automatically
+    // Initialize Dawn proc table before creating WebGPU instance.
+    // Only needed when using dawn_native/dawn_proc (Xcode generator workaround).
+    // For other generators, webgpu_dawn handles this automatically.
     static struct DawnProcsInitializer {
         DawnProcsInitializer() { dawnProcSetProcs(&dawn::native::GetProcs()); }
     } initDawnProcs;
 #endif
 
-    // Use synchronous initialization with TimedWaitAny
+    // Use synchronous initialization with TimedWaitAny.
     static const auto kTimedWaitAny = wgpu::InstanceFeatureName::TimedWaitAny;
     wgpu::InstanceDescriptor instanceDesc{.requiredFeatureCount = 1,
                                           .requiredFeatures = &kTimedWaitAny};
@@ -265,7 +265,7 @@ void WebgpuRenderer::Initialize(GLFWwindow* window, const Environment& environme
     deviceDesc.SetDeviceLostCallback(
         wgpu::CallbackMode::AllowSpontaneous,
         [](const wgpu::Device&, wgpu::DeviceLostReason reason, wgpu::StringView message) {
-            // Destroyed and CallbackCancelled are expected during normal shutdown
+            // Destroyed and CallbackCancelled are expected during normal shutdown.
             if (reason == wgpu::DeviceLostReason::Destroyed ||
                 reason == wgpu::DeviceLostReason::CallbackCancelled) {
                 WGPU_LOG_INFO("Device released.");
@@ -328,7 +328,7 @@ void WebgpuRenderer::Shutdown() {
     }
     _isShutdown = true;
 
-    // Wait for GPU to finish all pending work before releasing resources
+    // Wait for GPU to finish all pending work before releasing resources.
     if (_device) {
         wgpu::Future workDoneFuture = _device.GetQueue().OnSubmittedWorkDone(
             wgpu::CallbackMode::WaitAnyOnly,
@@ -336,37 +336,37 @@ void WebgpuRenderer::Shutdown() {
         _instance.WaitAny(workDoneFuture, UINT64_MAX);
     }
 
-    // Clear collections first (these hold GPU resources)
+    // Clear collections first (these hold GPU resources).
     _materials.clear();
     _opaqueMeshes.clear();
     _transparentMeshes.clear();
     _transparentMeshesDepthSorted.clear();
 
-    // Release GPU resources in reverse dependency order
-    // Pipelines and shader modules
+    // Release GPU resources in reverse dependency order.
+    // Pipelines and shader modules.
     _modelPipelineOpaque = nullptr;
     _modelPipelineTransparent = nullptr;
     _modelShaderModule = nullptr;
     _environmentPipeline = nullptr;
     _environmentShaderModule = nullptr;
 
-    // Bind groups and layouts
+    // Bind groups and layouts.
     _globalBindGroup = nullptr;
     _globalBindGroupLayout = nullptr;
     _modelBindGroupLayout = nullptr;
 
-    // Buffers
+    // Buffers.
     _vertexBuffer = nullptr;
     _indexBuffer = nullptr;
     _globalUniformBuffer = nullptr;
     _modelUniformBuffer = nullptr;
 
-    // Samplers
+    // Samplers.
     _modelTextureSampler = nullptr;
     _environmentCubeSampler = nullptr;
     _iblBrdfIntegrationLUTSampler = nullptr;
 
-    // Environment textures and views
+    // Environment textures and views.
     _environmentTextureView = nullptr;
     _environmentTexture = nullptr;
     _iblIrradianceTextureView = nullptr;
@@ -376,7 +376,7 @@ void WebgpuRenderer::Shutdown() {
     _iblBrdfIntegrationLUTView = nullptr;
     _iblBrdfIntegrationLUT = nullptr;
 
-    // Default textures
+    // Default textures.
     _defaultSRGBTextureView = nullptr;
     _defaultSRGBTexture = nullptr;
     _defaultUNormTextureView = nullptr;
@@ -386,11 +386,11 @@ void WebgpuRenderer::Shutdown() {
     _defaultCubeTextureView = nullptr;
     _defaultCubeTexture = nullptr;
 
-    // Depth texture
+    // Depth texture.
     _depthTextureView = nullptr;
     _depthTexture = nullptr;
 
-    // Surface and core objects
+    // Surface and core objects.
     _surface = nullptr;
     _device = nullptr;
     _adapter = nullptr;
@@ -594,7 +594,7 @@ void WebgpuRenderer::CreateDefaultTextures() {
         layout.bytesPerRow = 4;
         wgpu::Extent3D size{1, 1, 1};
 
-        // Write white pixel to each face of the cubemap
+        // Write white pixel to each face of the cubemap.
         for (uint32_t face = 0; face < 6; ++face) {
             dst.origin = {0, 0, face};
             _device.GetQueue().WriteTexture(&dst, whitePixel, sizeof(whitePixel), &layout, &size);
@@ -732,7 +732,7 @@ void WebgpuRenderer::CreateBindGroupLayouts() {
 }
 
 void WebgpuRenderer::CreateSamplers() {
-    // Model textures sampler
+    // Model textures sampler.
     if (!_modelTextureSampler) {
         wgpu::SamplerDescriptor samplerDescriptor{};
         samplerDescriptor.addressModeU = wgpu::AddressMode::Repeat;
@@ -744,7 +744,7 @@ void WebgpuRenderer::CreateSamplers() {
         _modelTextureSampler = _device.CreateSampler(&samplerDescriptor);
     }
 
-    // Environment cube sampler
+    // Environment cube sampler.
     if (!_environmentCubeSampler) {
         wgpu::SamplerDescriptor samplerDescriptor{};
         samplerDescriptor.addressModeU = wgpu::AddressMode::Repeat;
@@ -770,12 +770,12 @@ void WebgpuRenderer::CreateSamplers() {
 }
 
 void WebgpuRenderer::CreateRenderPassDescriptor() {
-    // Configure color attachment
+    // Configure color attachment.
     _colorAttachment.loadOp = wgpu::LoadOp::Clear;
     _colorAttachment.storeOp = wgpu::StoreOp::Store;
     _colorAttachment.clearValue = {.r = 0.0f, .g = 0.2f, .b = 0.4f, .a = 1.0f};
 
-    // Configure depth attachment
+    // Configure depth attachment.
     _depthAttachment.view = _depthTextureView;
     _depthAttachment.depthLoadOp = wgpu::LoadOp::Clear;
     _depthAttachment.depthStoreOp = wgpu::StoreOp::Store;
@@ -783,7 +783,7 @@ void WebgpuRenderer::CreateRenderPassDescriptor() {
     _depthAttachment.stencilLoadOp = wgpu::LoadOp::Clear;
     _depthAttachment.stencilStoreOp = wgpu::StoreOp::Store;
 
-    // Initialize render pass descriptor
+    // Initialize render pass descriptor.
     _renderPassDescriptor.colorAttachmentCount = 1;
     _renderPassDescriptor.colorAttachments = &_colorAttachment;
     _renderPassDescriptor.depthStencilAttachment = &_depthAttachment;
@@ -824,7 +824,7 @@ void WebgpuRenderer::CreateUniformBuffers() {
 
     _globalUniformBuffer = _device.CreateBuffer(&bufferDescriptor);
 
-    // Initialize Global Uniforms with default values
+    // Initialize Global Uniforms with default values.
     GlobalUniforms globalUniforms;
     globalUniforms.viewMatrix = glm::mat4(1.0f);              // Initialize as identity
     globalUniforms.projectionMatrix = glm::mat4(1.0f);        // Initialize as identity
@@ -835,11 +835,11 @@ void WebgpuRenderer::CreateUniformBuffers() {
     _device.GetQueue().WriteBuffer(_globalUniformBuffer, 0, &globalUniforms,
                                    sizeof(GlobalUniforms));
 
-    // Create the model uniform buffer
+    // Create the model uniform buffer.
     bufferDescriptor.size = sizeof(ModelUniforms);
     _modelUniformBuffer = _device.CreateBuffer(&bufferDescriptor);
 
-    // Initialize Model Uniforms with default values
+    // Initialize Model Uniforms with default values.
     ModelUniforms modelUniforms;
     modelUniforms.modelMatrix = glm::mat4(1.0f);  // Initialize as identity
     modelUniforms.normalMatrix = glm::mat4(1.0f); // Initialize as identity
@@ -851,12 +851,12 @@ void WebgpuRenderer::CreateEnvironmentTextures(const Environment& environment) {
     const Environment::Texture& panoramaTexture = environment.GetTexture();
     uint32_t environmentCubeSize = FloorPow2(panoramaTexture._width);
 
-    // Create helpers
+    // Create helpers.
     MipmapGenerator mipmapGenerator(_device);
     PanoramaToCubemapConverter panoramaToCubemapConverter(_device);
     EnvironmentPreprocessor environmentPreprocessor(_device);
 
-    // Create IBL textures
+    // Create IBL textures.
     CreateEnvironmentTexture(_device, wgpu::TextureViewDimension::Cube,
                              {environmentCubeSize, environmentCubeSize, 6}, true,
                              _environmentTexture, _environmentTextureView);
@@ -870,13 +870,13 @@ void WebgpuRenderer::CreateEnvironmentTextures(const Environment& environment) {
                              {kBRDFIntegrationLUTMapSize, kBRDFIntegrationLUTMapSize, 1}, false,
                              _iblBrdfIntegrationLUT, _iblBrdfIntegrationLUTView);
 
-    // Upload panorama texture and resample to cubemap
+    // Upload panorama texture and resample to cubemap.
     panoramaToCubemapConverter.UploadAndConvert(panoramaTexture, _environmentTexture);
     mipmapGenerator.GenerateMipmaps(_environmentTexture,
                                     {environmentCubeSize, environmentCubeSize, 6},
                                     MipmapGenerator::MipKind::Float16Cube);
 
-    // Precompute IBL maps
+    // Precompute IBL maps.
     environmentPreprocessor.GenerateMaps(_environmentTexture, _iblIrradianceTexture,
                                          _iblSpecularTexture, _iblBrdfIntegrationLUT);
 
@@ -904,12 +904,12 @@ void WebgpuRenderer::CreateSubMeshes(const Model& model) {
 }
 
 void WebgpuRenderer::CreateMaterials(const Model& model) {
-    // Create mipmap generator helper
+    // Create mipmap generator helper.
     MipmapGenerator mipmapGenerator(_device);
 
     _materials.clear();
 
-    // Check if the model has any textures
+    // Check if the model has any textures.
     if (!model.GetMaterials().empty()) {
         _materials.resize(model.GetMaterials().size());
 
@@ -917,13 +917,13 @@ void WebgpuRenderer::CreateMaterials(const Model& model) {
             const Model::Material& srcMat = model.GetMaterials()[i];
             Material& dstMat = _materials[i];
 
-            // Create uniform buffer
+            // Create uniform buffer.
             wgpu::BufferDescriptor bufferDescriptor{};
             bufferDescriptor.size = sizeof(MaterialUniforms);
             bufferDescriptor.usage = wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst;
             dstMat._uniformBuffer = _device.CreateBuffer(&bufferDescriptor);
 
-            // Initialize Material Uniforms
+            // Initialize Material Uniforms.
             dstMat._uniforms.baseColorFactor = srcMat._baseColorFactor;
             dstMat._uniforms.emissiveFactor = srcMat._emissiveFactor;
             dstMat._uniforms.metallicFactor = srcMat._metallicFactor;
@@ -986,7 +986,7 @@ void WebgpuRenderer::CreateMaterials(const Model& model) {
                 dstMat._emissiveTexture = _defaultSRGBTexture;
             }
 
-            // Create bind group
+            // Create bind group.
             wgpu::BindGroupEntry bindGroupEntries[8]{};
             bindGroupEntries[0].binding = 0;
             bindGroupEntries[0].buffer = _modelUniformBuffer;
@@ -1036,7 +1036,7 @@ void WebgpuRenderer::CreateGlobalBindGroup() {
     bindGroupEntries[1].binding = 1;
     bindGroupEntries[1].sampler = _environmentCubeSampler;
 
-    // Use environment resources if available, otherwise use fallbacks
+    // Use environment resources if available, otherwise use fallbacks.
     bindGroupEntries[2].binding = 2;
     bindGroupEntries[2].textureView =
         _environmentTextureView ? _environmentTextureView : _defaultCubeTextureView;
