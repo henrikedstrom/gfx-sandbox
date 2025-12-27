@@ -5,7 +5,6 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
-#include <iostream>
 #include <memory>
 #include <string>
 #include <vector>
@@ -36,6 +35,7 @@
 #include "Model.h"
 #include "PanoramaToCubemapConverter.h"
 #include "ShaderUtils.h"
+#include "WebgpuConfig.h"
 
 //----------------------------------------------------------------------
 // Backend Registration
@@ -240,10 +240,10 @@ void WebgpuRenderer::Initialize(GLFWwindow* window, const Environment& environme
         [this](wgpu::RequestAdapterStatus status, wgpu::Adapter adapter, wgpu::StringView message) {
             const std::string_view msg = message;
             if (!msg.empty()) {
-                std::cerr << "RequestAdapter: " << msg << std::endl;
+                WGPU_LOG_WARNING("RequestAdapter: {}", msg);
             }
             if (status != wgpu::RequestAdapterStatus::Success) {
-                std::cerr << "Failed to request adapter." << std::endl;
+                WGPU_LOG_ERROR("Failed to request adapter.");
                 std::exit(EXIT_FAILURE);
             }
             _adapter = std::move(adapter);
@@ -259,44 +259,43 @@ void WebgpuRenderer::Initialize(GLFWwindow* window, const Environment& environme
         requiredLimits.maxBufferSize = std::max(requiredLimits.maxBufferSize, oneGiB);
         deviceDesc.requiredLimits = &requiredLimits;
     } else {
-        std::cerr << "Warning: failed to query adapter limits; using default device limits."
-                  << std::endl;
+        WGPU_LOG_WARNING("Failed to query adapter limits; using default device limits.");
     }
 
     deviceDesc.SetDeviceLostCallback(
         wgpu::CallbackMode::AllowSpontaneous,
         [](const wgpu::Device&, wgpu::DeviceLostReason reason, wgpu::StringView message) {
+            // Destroyed and CallbackCancelled are expected during normal shutdown
+            if (reason == wgpu::DeviceLostReason::Destroyed ||
+                reason == wgpu::DeviceLostReason::CallbackCancelled) {
+                WGPU_LOG_INFO("Device released.");
+                return;
+            }
+
             const std::string_view msg = message;
-            std::cerr << "Device lost: ";
+            const char* reasonStr = "Unknown";
             switch (reason) {
             case wgpu::DeviceLostReason::Unknown:
-                std::cerr << "[Reason: Unknown]";
-                break;
-            case wgpu::DeviceLostReason::Destroyed:
-                std::cerr << "[Reason: Destroyed]";
-                break;
-            case wgpu::DeviceLostReason::CallbackCancelled:
-                std::cerr << "[Reason: Callback Cancelled]";
+                reasonStr = "Unknown";
                 break;
             case wgpu::DeviceLostReason::FailedCreation:
-                std::cerr << "[Reason: Failed Creation]";
+                reasonStr = "Failed Creation";
                 break;
             default:
-                std::cerr << "[Reason: Unrecognized]";
+                reasonStr = "Unrecognized";
                 break;
             }
             if (!msg.empty()) {
-                std::cerr << " - " << msg << std::endl;
+                WGPU_LOG_ERROR("Device lost: [Reason: {}] - {}", reasonStr, msg);
             } else {
-                std::cerr << " - No message provided." << std::endl;
+                WGPU_LOG_ERROR("Device lost: [Reason: {}]", reasonStr);
             }
         });
 
     deviceDesc.SetUncapturedErrorCallback(
         [](const wgpu::Device&, wgpu::ErrorType errorType, wgpu::StringView message) {
             const std::string_view msg = message;
-            std::cerr << "Uncaptured error: " << static_cast<int>(errorType) << " - " << msg
-                      << std::endl;
+            WGPU_LOG_ERROR("Uncaptured error: {} - {}", static_cast<int>(errorType), msg);
             std::exit(EXIT_FAILURE);
         });
 
@@ -305,10 +304,10 @@ void WebgpuRenderer::Initialize(GLFWwindow* window, const Environment& environme
         [this](wgpu::RequestDeviceStatus status, wgpu::Device device, wgpu::StringView message) {
             const std::string_view msg = message;
             if (!msg.empty()) {
-                std::cerr << "RequestDevice: " << msg << std::endl;
+                WGPU_LOG_WARNING("RequestDevice: {}", msg);
             }
             if (status != wgpu::RequestDeviceStatus::Success) {
-                std::cerr << "Failed to request device." << std::endl;
+                WGPU_LOG_ERROR("Failed to request device.");
                 std::exit(EXIT_FAILURE);
             }
             _device = std::move(device);
@@ -397,7 +396,7 @@ void WebgpuRenderer::Shutdown() {
     _adapter = nullptr;
     _instance = nullptr;
 
-    std::cout << "[WebgpuRenderer] Shutdown complete." << std::endl;
+    WGPU_LOG_INFO("Shutdown complete.");
 }
 
 void WebgpuRenderer::Resize() {
@@ -413,7 +412,7 @@ void WebgpuRenderer::Render(const glm::mat4& modelMatrix, const CameraUniformsIn
     wgpu::SurfaceTexture surfaceTexture;
     _surface.GetCurrentTexture(&surfaceTexture);
     if (!surfaceTexture.texture) {
-        std::cerr << "Error: Failed to get current surface texture." << std::endl;
+        WGPU_LOG_ERROR("Failed to get current surface texture.");
         return;
     }
     _colorAttachment.view = surfaceTexture.texture.CreateView();
@@ -477,7 +476,7 @@ void WebgpuRenderer::UpdateModel(const Model& model) {
 
     auto t1 = std::chrono::high_resolution_clock::now();
     double totalMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
-    std::cout << "Updated Model WebGPU resources in " << totalMs << "ms" << std::endl;
+    WGPU_LOG_INFO("Updated Model resources in {:.2f}ms", totalMs);
 }
 
 void WebgpuRenderer::UpdateEnvironment(const Environment& environment) {
@@ -497,7 +496,7 @@ void WebgpuRenderer::UpdateEnvironment(const Environment& environment) {
 
     auto t1 = std::chrono::high_resolution_clock::now();
     double totalMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
-    std::cout << "Updated Environment WebGPU resources in " << totalMs << "ms" << std::endl;
+    WGPU_LOG_INFO("Updated Environment resources in {:.2f}ms", totalMs);
 }
 
 void WebgpuRenderer::InitGraphics(const Environment& environment, const Model& model) {

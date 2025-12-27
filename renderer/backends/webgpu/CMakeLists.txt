@@ -11,6 +11,7 @@ endif()
 # We just need to link against it here.
 
 set(gfx_renderer_webgpu_sources
+  WebgpuConfig.h
   WebgpuRenderer.cpp
   WebgpuRenderer.h
   EnvironmentPreprocessor.cpp
