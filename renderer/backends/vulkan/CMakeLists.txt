@@ -3,7 +3,7 @@
 # Requires the Vulkan SDK to be installed on the system.
 # ----------------------------------------------------------------------
 
-if(NOT ENABLE_VULKAN)
+if(NOT ENABLE_VULKAN OR EMSCRIPTEN)
   return()
 endif()
 
