@@ -3,11 +3,13 @@
 
 // Standard Library Headers
 #include <array>
+#include <filesystem>
 #include <memory>
 
 // Project Headers
 #include "BackendRegistry.h"
 #include "VulkanCore.h"
+#include "VulkanShaderUtils.h"
 #include "VulkanSwapchain.h"
 
 //----------------------------------------------------------------------
@@ -36,6 +38,8 @@ void VulkanRenderer::Initialize(GLFWwindow* window, [[maybe_unused]] const Envir
 
     CreateDepthResources();
     CreateRenderPass();
+    CreatePipelineLayout();
+    CreateGraphicsPipeline();
     CreateFramebuffers();
     CreateCommandPool();
     CreateCommandBuffers();
@@ -61,10 +65,11 @@ void VulkanRenderer::Resize() {
         // Wait for device to be idle before recreating resources
         _core->GetDevice().waitIdle();
 
-        // Recreate swapchain, depth buffer, and framebuffers
+        // Recreate swapchain-dependent resources
         _swapchain->Recreate(*_core, _window);
         CreateDepthResources();
         RecreateFramebuffers();
+        UpdateSwapchainSyncObjects(); // Image count may have changed
     }
 }
 
@@ -82,9 +87,9 @@ void VulkanRenderer::Render([[maybe_unused]] const glm::mat4& modelMatrix,
     // Acquire the next swapchain image
     uint32_t imageIndex{};
     try {
-        auto acquireResult = device.acquireNextImageKHR(
-            _swapchain->GetSwapchain(), UINT64_MAX,
-            *_imageAvailableSemaphores[_currentFrame], nullptr);
+        auto acquireResult =
+            device.acquireNextImageKHR(_swapchain->GetSwapchain(), UINT64_MAX,
+                                       *_imageAvailableSemaphores[_currentFrame], nullptr);
 
         if (acquireResult.result == vk::Result::eErrorOutOfDateKHR) {
             Resize();
@@ -127,15 +132,37 @@ void VulkanRenderer::Render([[maybe_unused]] const glm::mat4& modelMatrix,
     renderPassInfo.pClearValues = clearValues.data();
 
     cmd.beginRenderPass(renderPassInfo, vk::SubpassContents::eInline);
-    // No draw calls yet - just clearing
+
+    // Set dynamic viewport and scissor
+    const auto extent = _swapchain->GetExtent();
+    vk::Viewport viewport{};
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
+    viewport.width = static_cast<float>(extent.width);
+    viewport.height = static_cast<float>(extent.height);
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    cmd.setViewport(0, viewport);
+
+    vk::Rect2D scissor{};
+    scissor.offset = vk::Offset2D{0, 0};
+    scissor.extent = extent;
+    cmd.setScissor(0, scissor);
+
+    // Bind pipeline and draw fullscreen triangle
+    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *_graphicsPipeline);
+    cmd.draw(3, 1, 0, 0);
+
     cmd.endRenderPass();
 
     cmd.end();
 
     // Submit command buffer
+    
+    // Wait on image acquisition (per frame), signal render complete (per swapchain image)
     vk::Semaphore waitSemaphores[] = {*_imageAvailableSemaphores[_currentFrame]};
     vk::PipelineStageFlags waitStages[] = {vk::PipelineStageFlagBits::eColorAttachmentOutput};
-    vk::Semaphore signalSemaphores[] = {*_renderFinishedSemaphores[_currentFrame]};
+    vk::Semaphore signalSemaphores[] = {*_renderFinishedSemaphores[imageIndex]};
 
     vk::SubmitInfo submitInfo{};
     submitInfo.waitSemaphoreCount = 1;
@@ -149,7 +176,7 @@ void VulkanRenderer::Render([[maybe_unused]] const glm::mat4& modelMatrix,
 
     _core->GetGraphicsQueue().submit(submitInfo, *_inFlightFences[_currentFrame]);
 
-    // Present
+    // Present (wait on the render finished semaphore for this image)
     vk::PresentInfoKHR presentInfo{};
     presentInfo.waitSemaphoreCount = 1;
     presentInfo.pWaitSemaphores = signalSemaphores;
@@ -227,8 +254,8 @@ void VulkanRenderer::CreateRenderPass() {
     dependency.srcAccessMask = vk::AccessFlagBits::eNone;
     dependency.dstStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput |
                               vk::PipelineStageFlagBits::eEarlyFragmentTests;
-    dependency.dstAccessMask =
-        vk::AccessFlagBits::eColorAttachmentWrite | vk::AccessFlagBits::eDepthStencilAttachmentWrite;
+    dependency.dstAccessMask = vk::AccessFlagBits::eColorAttachmentWrite |
+                               vk::AccessFlagBits::eDepthStencilAttachmentWrite;
 
     std::array<vk::AttachmentDescription, 2> attachments = {colorAttachment, depthAttachment};
 
@@ -284,18 +311,24 @@ void VulkanRenderer::CreateCommandBuffers() {
 }
 
 void VulkanRenderer::CreateSyncObjects() {
-    _imageAvailableSemaphores.reserve(vkbackend::kMaxFramesInFlight);
-    _renderFinishedSemaphores.reserve(vkbackend::kMaxFramesInFlight);
-    _inFlightFences.reserve(vkbackend::kMaxFramesInFlight);
+    const uint32_t imageCount = _swapchain->GetImageCount();
 
     vk::SemaphoreCreateInfo semaphoreInfo{};
     vk::FenceCreateInfo fenceInfo{};
     fenceInfo.flags = vk::FenceCreateFlagBits::eSignaled; // Start signaled so first wait succeeds
 
+    // Per frame-in-flight: image acquisition semaphores and fences
+    _imageAvailableSemaphores.reserve(vkbackend::kMaxFramesInFlight);
+    _inFlightFences.reserve(vkbackend::kMaxFramesInFlight);
     for (uint32_t i = 0; i < vkbackend::kMaxFramesInFlight; ++i) {
         _imageAvailableSemaphores.push_back(_core->GetRaiiDevice().createSemaphore(semaphoreInfo));
-        _renderFinishedSemaphores.push_back(_core->GetRaiiDevice().createSemaphore(semaphoreInfo));
         _inFlightFences.push_back(_core->GetRaiiDevice().createFence(fenceInfo));
+    }
+
+    // Per swapchain image: render finished semaphores (avoids reuse while presentation pending)
+    _renderFinishedSemaphores.reserve(imageCount);
+    for (uint32_t i = 0; i < imageCount; ++i) {
+        _renderFinishedSemaphores.push_back(_core->GetRaiiDevice().createSemaphore(semaphoreInfo));
     }
 }
 
@@ -308,8 +341,7 @@ vk::Format VulkanRenderer::FindDepthFormat() const {
     };
 
     for (vk::Format format : candidates) {
-        vk::FormatProperties props =
-            _core->GetRaiiPhysicalDevice().getFormatProperties(format);
+        vk::FormatProperties props = _core->GetRaiiPhysicalDevice().getFormatProperties(format);
 
         // Check if format supports depth stencil attachment
         if (props.optimalTilingFeatures & vk::FormatFeatureFlagBits::eDepthStencilAttachment) {
@@ -347,8 +379,8 @@ void VulkanRenderer::CreateDepthResources() {
 
     vk::MemoryAllocateInfo allocInfo{};
     allocInfo.allocationSize = memRequirements.size;
-    allocInfo.memoryTypeIndex = _core->FindMemoryType(
-        memRequirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal);
+    allocInfo.memoryTypeIndex = _core->FindMemoryType(memRequirements.memoryTypeBits,
+                                                      vk::MemoryPropertyFlagBits::eDeviceLocal);
 
     _depthImageMemory = device.allocateMemory(allocInfo);
     _depthImage.bindMemory(*_depthImageMemory, 0);
@@ -373,4 +405,125 @@ void VulkanRenderer::CreateDepthResources() {
 void VulkanRenderer::RecreateFramebuffers() {
     _framebuffers.clear();
     CreateFramebuffers();
+}
+
+void VulkanRenderer::UpdateSwapchainSyncObjects() {
+    // Recreate render finished semaphores (count depends on swapchain image count)
+    _renderFinishedSemaphores.clear();
+
+    const uint32_t imageCount = _swapchain->GetImageCount();
+    vk::SemaphoreCreateInfo semaphoreInfo{};
+
+    _renderFinishedSemaphores.reserve(imageCount);
+    for (uint32_t i = 0; i < imageCount; ++i) {
+        _renderFinishedSemaphores.push_back(_core->GetRaiiDevice().createSemaphore(semaphoreInfo));
+    }
+}
+
+void VulkanRenderer::CreatePipelineLayout() {
+    // Empty layout for now (no descriptor sets or push constants)
+    vk::PipelineLayoutCreateInfo layoutInfo{};
+    layoutInfo.setLayoutCount = 0;
+    layoutInfo.pSetLayouts = nullptr;
+    layoutInfo.pushConstantRangeCount = 0;
+    layoutInfo.pPushConstantRanges = nullptr;
+
+    _pipelineLayout = _core->GetRaiiDevice().createPipelineLayout(layoutInfo);
+}
+
+void VulkanRenderer::CreateGraphicsPipeline() {
+    const auto& device = _core->GetRaiiDevice();
+    const std::filesystem::path shaderPath{GFX_VULKAN_SHADER_PATH};
+
+    // Load shader modules
+    auto vertModule = vkshader::LoadShaderModule(device, shaderPath / "simple.vert.spv");
+    auto fragModule = vkshader::LoadShaderModule(device, shaderPath / "simple.frag.spv");
+
+    if (!*vertModule || !*fragModule) {
+        throw std::runtime_error("Failed to load shader modules");
+    }
+
+    // Shader stages
+    std::array shaderStages = {
+        vkshader::CreateShaderStageInfo(vk::ShaderStageFlagBits::eVertex, vertModule),
+        vkshader::CreateShaderStageInfo(vk::ShaderStageFlagBits::eFragment, fragModule),
+    };
+
+    // Vertex input: empty (using gl_VertexIndex in shader)
+    vk::PipelineVertexInputStateCreateInfo vertexInputInfo{};
+
+    // Input assembly: triangle list
+    vk::PipelineInputAssemblyStateCreateInfo inputAssembly{};
+    inputAssembly.topology = vk::PrimitiveTopology::eTriangleList;
+    inputAssembly.primitiveRestartEnable = VK_FALSE;
+
+    // Viewport and scissor: dynamic state
+    vk::PipelineViewportStateCreateInfo viewportState{};
+    viewportState.viewportCount = 1;
+    viewportState.scissorCount = 1;
+
+    // Rasterizer
+    vk::PipelineRasterizationStateCreateInfo rasterizer{};
+    rasterizer.depthClampEnable = VK_FALSE;
+    rasterizer.rasterizerDiscardEnable = VK_FALSE;
+    rasterizer.polygonMode = vk::PolygonMode::eFill;
+    rasterizer.lineWidth = 1.0f;
+    rasterizer.cullMode = vk::CullModeFlagBits::eNone;
+    rasterizer.frontFace = vk::FrontFace::eCounterClockwise;
+    rasterizer.depthBiasEnable = VK_FALSE;
+
+    // Multisampling: disabled
+    vk::PipelineMultisampleStateCreateInfo multisampling{};
+    multisampling.sampleShadingEnable = VK_FALSE;
+    multisampling.rasterizationSamples = vk::SampleCountFlagBits::e1;
+
+    // Depth/stencil: enabled for depth testing
+    vk::PipelineDepthStencilStateCreateInfo depthStencil{};
+    depthStencil.depthTestEnable = VK_TRUE;
+    depthStencil.depthWriteEnable = VK_TRUE;
+    depthStencil.depthCompareOp = vk::CompareOp::eLessOrEqual;
+    depthStencil.depthBoundsTestEnable = VK_FALSE;
+    depthStencil.stencilTestEnable = VK_FALSE;
+
+    // Color blending: no blending, write all components
+    vk::PipelineColorBlendAttachmentState colorBlendAttachment{};
+    colorBlendAttachment.colorWriteMask =
+        vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
+        vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
+    colorBlendAttachment.blendEnable = VK_FALSE;
+
+    vk::PipelineColorBlendStateCreateInfo colorBlending{};
+    colorBlending.logicOpEnable = VK_FALSE;
+    colorBlending.attachmentCount = 1;
+    colorBlending.pAttachments = &colorBlendAttachment;
+
+    // Dynamic state: viewport and scissor
+    std::array dynamicStates = {
+        vk::DynamicState::eViewport,
+        vk::DynamicState::eScissor,
+    };
+
+    vk::PipelineDynamicStateCreateInfo dynamicState{};
+    dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
+    dynamicState.pDynamicStates = dynamicStates.data();
+
+    // Create the graphics pipeline
+    vk::GraphicsPipelineCreateInfo pipelineInfo{};
+    pipelineInfo.stageCount = static_cast<uint32_t>(shaderStages.size());
+    pipelineInfo.pStages = shaderStages.data();
+    pipelineInfo.pVertexInputState = &vertexInputInfo;
+    pipelineInfo.pInputAssemblyState = &inputAssembly;
+    pipelineInfo.pViewportState = &viewportState;
+    pipelineInfo.pRasterizationState = &rasterizer;
+    pipelineInfo.pMultisampleState = &multisampling;
+    pipelineInfo.pDepthStencilState = &depthStencil;
+    pipelineInfo.pColorBlendState = &colorBlending;
+    pipelineInfo.pDynamicState = &dynamicState;
+    pipelineInfo.layout = *_pipelineLayout;
+    pipelineInfo.renderPass = *_renderPass;
+    pipelineInfo.subpass = 0;
+
+    _graphicsPipeline = device.createGraphicsPipeline(nullptr, pipelineInfo);
+
+    VK_LOG_INFO("Graphics pipeline created.");
 }

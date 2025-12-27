@@ -39,6 +39,11 @@ target_link_libraries(gfx_renderer_vulkan PUBLIC
 
 set_target_properties(gfx_renderer_vulkan PROPERTIES FOLDER "Renderer/Backends/Vulkan")
 
+# Shader path configuration (compile-time constant for native builds)
+target_compile_definitions(gfx_renderer_vulkan PRIVATE
+  GFX_VULKAN_SHADER_PATH="${CMAKE_CURRENT_SOURCE_DIR}/shaders"
+)
+
 
 # ----------------------------------------------------------------------
 # GLSL to SPIR-V shader compilation

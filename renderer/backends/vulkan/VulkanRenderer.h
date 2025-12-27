@@ -45,7 +45,10 @@ class VulkanRenderer final : public IRenderer {
     void CreateCommandBuffers();
     void CreateSyncObjects();
     void CreateDepthResources();
+    void CreatePipelineLayout();
+    void CreateGraphicsPipeline();
     void RecreateFramebuffers();
+    void UpdateSwapchainSyncObjects();
 
     // Utility functions
     vk::Format FindDepthFormat() const;
@@ -65,13 +68,17 @@ class VulkanRenderer final : public IRenderer {
     vk::raii::ImageView _depthImageView{nullptr};
     vk::Format _depthFormat{vk::Format::eUndefined};
 
+    // Pipeline
+    vk::raii::PipelineLayout _pipelineLayout{nullptr};
+    vk::raii::Pipeline _graphicsPipeline{nullptr};
+
     // Command pool and buffers
     vk::raii::CommandPool _commandPool{nullptr};
     std::vector<vk::raii::CommandBuffer> _commandBuffers;
 
-    // Synchronization primitives (per frame in flight)
-    std::vector<vk::raii::Semaphore> _imageAvailableSemaphores;
-    std::vector<vk::raii::Semaphore> _renderFinishedSemaphores;
-    std::vector<vk::raii::Fence> _inFlightFences;
+    // Synchronization primitives
+    std::vector<vk::raii::Semaphore> _imageAvailableSemaphores; // Per frame in flight
+    std::vector<vk::raii::Semaphore> _renderFinishedSemaphores; // Per swapchain image
+    std::vector<vk::raii::Fence> _inFlightFences;               // Per frame in flight
     uint32_t _currentFrame{0};
 };

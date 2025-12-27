@@ -74,28 +74,26 @@ std::vector<const char*> GetRequiredInstanceExtensions() {
 //----------------------------------------------------------------------
 // Debug Messenger Callback
 
-VKAPI_ATTR VkBool32 VKAPI_CALL DebugMessengerCallback(
-    VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
-    [[maybe_unused]] VkDebugUtilsMessageTypeFlagsEXT messageTypes,
-    const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData, [[maybe_unused]] void* pUserData) {
-    // Select output stream based on severity
-    if (messageSeverity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) {
-        std::cerr << "[Vulkan Error] " << pCallbackData->pMessage << std::endl;
-    } else if (messageSeverity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) {
-        std::cerr << "[Vulkan Warning] " << pCallbackData->pMessage << std::endl;
+VkBool32 DebugMessengerCallback(vk::DebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
+    [[maybe_unused]] vk::DebugUtilsMessageTypeFlagsEXT messageTypes,
+    const vk::DebugUtilsMessengerCallbackDataEXT* pCallbackData, [[maybe_unused]] void* pUserData) {
+    if (messageSeverity >= vk::DebugUtilsMessageSeverityFlagBitsEXT::eError) {
+        VK_LOG_VALIDATION_ERROR(pCallbackData->pMessage);
+    } else if (messageSeverity >= vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning) {
+        VK_LOG_VALIDATION_WARNING(pCallbackData->pMessage);
     }
     return VK_FALSE;
 }
 
 vk::DebugUtilsMessengerCreateInfoEXT MakeDebugMessengerCreateInfo() {
-    return vk::DebugUtilsMessengerCreateInfoEXT{
-        {}, // flags
-        vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning |
-            vk::DebugUtilsMessageSeverityFlagBitsEXT::eError,
-        vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral |
-            vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation |
-            vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance,
-        DebugMessengerCallback};
+    vk::DebugUtilsMessengerCreateInfoEXT createInfo;
+    createInfo.messageSeverity = vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning |
+                                 vk::DebugUtilsMessageSeverityFlagBitsEXT::eError;
+    createInfo.messageType = vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral |
+                             vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation |
+                             vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance;
+    createInfo.pfnUserCallback = DebugMessengerCallback;
+    return createInfo;
 }
 
 //----------------------------------------------------------------------
@@ -330,14 +328,6 @@ VulkanCore::VulkanCore(GLFWwindow* window) {
     deviceCreateInfo.pEnabledFeatures = &deviceFeatures;
     deviceCreateInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
     deviceCreateInfo.ppEnabledExtensionNames = deviceExtensions.data();
-
-    // Enable validation layers on device (for compatibility with older implementations)
-    if (kEnableValidationLayers) {
-        deviceCreateInfo.enabledLayerCount = static_cast<uint32_t>(kValidationLayers.size());
-        deviceCreateInfo.ppEnabledLayerNames = kValidationLayers.data();
-    } else {
-        deviceCreateInfo.enabledLayerCount = 0;
-    }
 
     // Create the logical device
     _device = vk::raii::Device(_physicalDevice, deviceCreateInfo);
