@@ -17,3 +17,6 @@ Thumbs.db
 
 # Generated assets (copied at configure time for Emscripten builds)
 /assets/shaders/webgpu/
+
+# Compiled SPIR-V shaders
+*.spv

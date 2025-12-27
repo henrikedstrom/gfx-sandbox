@@ -1,0 +1,33 @@
+#version 450
+
+/// Environment background vertex shader.
+/// Renders a fullscreen triangle without vertex buffers.
+
+layout(set = 0, binding = 0) uniform GlobalUniforms {
+    mat4 viewMatrix;
+    mat4 projectionMatrix;
+    mat4 inverseViewMatrix;
+    mat4 inverseProjectionMatrix;
+    vec3 cameraPosition;
+} global;
+
+layout(location = 0) out vec2 outUV;
+
+void main() {
+    // Fullscreen triangle covering clip space [-1, 1]
+    vec2 positions[3] = vec2[](
+        vec2(-1.0, -1.0),
+        vec2( 3.0, -1.0),
+        vec2(-1.0,  3.0)
+    );
+
+    vec2 uvs[3] = vec2[](
+        vec2(0.0, 0.0),
+        vec2(2.0, 0.0),
+        vec2(0.0, 2.0)
+    );
+
+    gl_Position = vec4(positions[gl_VertexIndex], 0.0, 1.0);
+    outUV = uvs[gl_VertexIndex];
+}
+
