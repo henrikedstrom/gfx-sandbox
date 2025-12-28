@@ -14,6 +14,7 @@
 
 // Project Headers
 #include "BackendRegistry.h"
+#include "Model.h"
 #include "VulkanCore.h"
 #include "VulkanShaderUtils.h"
 #include "VulkanSwapchain.h"
@@ -42,7 +43,8 @@ VulkanRenderer::VulkanRenderer(GLFWwindow* window) : _window(window) {
     CreateDescriptorPool();
     CreateDescriptorSets();
     CreatePipelineLayout();
-    CreateGraphicsPipeline();
+    CreateEnvironmentPipeline();
+    CreateModelPipeline();
     CreateFramebuffers();
     CreateCommandBuffers();
     CreateSyncObjects();
@@ -113,7 +115,10 @@ void VulkanRenderer::Render(const glm::mat4& modelMatrix, const CameraUniformsIn
     // Reset the fence only when we're sure we'll submit work.
     device.resetFences(*_inFlightFences[_currentFrame]);
 
+
+    //----------------------------------
     // Record command buffer.
+
     auto& cmd = _commandBuffers[_currentFrame];
     cmd.reset();
 
@@ -140,9 +145,9 @@ void VulkanRenderer::Render(const glm::mat4& modelMatrix, const CameraUniformsIn
     const auto extent = _swapchain->GetExtent();
     vk::Viewport viewport{};
     viewport.x = 0.0f;
-    viewport.y = 0.0f;
+    viewport.y = static_cast<float>(extent.height); // Start at bottom
     viewport.width = static_cast<float>(extent.width);
-    viewport.height = static_cast<float>(extent.height);
+    viewport.height = -static_cast<float>(extent.height); // Negative height flips Y
     viewport.minDepth = 0.0f;
     viewport.maxDepth = 1.0f;
     cmd.setViewport(0, viewport);
@@ -152,16 +157,41 @@ void VulkanRenderer::Render(const glm::mat4& modelMatrix, const CameraUniformsIn
     scissor.extent = extent;
     cmd.setScissor(0, scissor);
 
-    // Bind pipeline and descriptor set, then draw fullscreen triangle.
-    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *_graphicsPipeline);
+    // Bind pipeline and descriptor set, then draw fullscreen triangle (environment/skybox).
+    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *_environmentPipeline);
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *_pipelineLayout, 0,
                            *_globalDescriptorSets[_currentFrame], nullptr);
     cmd.draw(3, 1, 0, 0);
+
+    // Draw model if one has been loaded.
+    if (*_vertexBuffer && *_indexBuffer && !_subMeshes.empty()) {
+        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *_modelPipeline);
+
+        // Bind vertex and index buffers.
+        vk::Buffer vertexBuffers[] = {*_vertexBuffer};
+        vk::DeviceSize offsets[] = {0};
+        cmd.bindVertexBuffers(0, vertexBuffers, offsets);
+        cmd.bindIndexBuffer(*_indexBuffer, 0, vk::IndexType::eUint32);
+
+        // Push model uniforms (model matrix + normal matrix).
+        ModelUniforms modelUniforms{};
+        modelUniforms.modelMatrix = modelMatrix;
+        modelUniforms.normalMatrix = glm::transpose(glm::inverse(modelMatrix));
+        cmd.pushConstants<ModelUniforms>(*_pipelineLayout, vk::ShaderStageFlagBits::eVertex, 0,
+                                         modelUniforms);
+
+        // Draw each submesh.
+        for (const auto& submesh : _subMeshes) {
+            cmd.drawIndexed(submesh._indexCount, 1, submesh._firstIndex, 0, 0);
+        }
+    }
 
     cmd.endRenderPass();
 
     cmd.end();
 
+
+    //----------------------------------
     // Submit command buffer.
 
     // Wait on image acquisition (per frame), signal render complete (per swapchain image).
@@ -181,7 +211,10 @@ void VulkanRenderer::Render(const glm::mat4& modelMatrix, const CameraUniformsIn
 
     _core->GetGraphicsQueue().submit(submitInfo, *_inFlightFences[_currentFrame]);
 
-    // Present (wait on the render finished semaphore for this image).
+    
+    //----------------------------------
+    // Present.
+
     vk::PresentInfoKHR presentInfo{};
     presentInfo.waitSemaphoreCount = 1;
     presentInfo.pWaitSemaphores = signalSemaphores;
@@ -201,16 +234,33 @@ void VulkanRenderer::Render(const glm::mat4& modelMatrix, const CameraUniformsIn
     _currentFrame = (_currentFrame + 1) % vkbackend::kMaxFramesInFlight;
 }
 
-void VulkanRenderer::SetModel([[maybe_unused]] const Model& model) {
-    // Not yet implemented.
+void VulkanRenderer::SetModel(const Model& model) {
+    // Wait for any in-flight frames to complete before destroying old buffers.
+    _core->GetDevice().waitIdle();
+
+    // Create vertex and index buffers from model data.
+    CreateVertexBuffer(model);
+    CreateIndexBuffer(model);
+
+    // Store submesh information for drawing.
+    _subMeshes.clear();
+    for (const auto& srcMesh : model.GetSubMeshes()) {
+        SubMesh dstMesh = {._firstIndex = srcMesh._firstIndex,
+                           ._indexCount = srcMesh._indexCount,
+                           ._materialIndex = srcMesh._materialIndex,
+                           ._centroid = (srcMesh._minBounds + srcMesh._maxBounds) * 0.5f};
+        _subMeshes.push_back(dstMesh);
+    }
+
+    VK_LOG_INFO("Model set: {} submeshes, {} total indices.", _subMeshes.size(), _indexCount);
 }
 
 void VulkanRenderer::SetEnvironment([[maybe_unused]] const Environment& environment) {
     // Not yet implemented.
 }
 
-//----------------------------------------------------------------------
-// Private Implementation
+// -------------------------------------------------------------------------
+// Core initialization
 
 void VulkanRenderer::CreateRenderPass() {
     // Color attachment
@@ -337,26 +387,6 @@ void VulkanRenderer::CreateSyncObjects() {
     }
 }
 
-vk::Format VulkanRenderer::FindDepthFormat() const {
-    // Preferred depth formats in order of preference.
-    const std::vector<vk::Format> candidates = {
-        vk::Format::eD32Sfloat,
-        vk::Format::eD32SfloatS8Uint,
-        vk::Format::eD24UnormS8Uint,
-    };
-
-    for (vk::Format format : candidates) {
-        vk::FormatProperties props = _core->GetRaiiPhysicalDevice().getFormatProperties(format);
-
-        // Check if format supports depth stencil attachment.
-        if (props.optimalTilingFeatures & vk::FormatFeatureFlagBits::eDepthStencilAttachment) {
-            return format;
-        }
-    }
-
-    throw std::runtime_error("Failed to find supported depth format!");
-}
-
 void VulkanRenderer::CreateDepthResources() {
     _depthFormat = FindDepthFormat();
     const auto extent = _swapchain->GetExtent();
@@ -425,115 +455,8 @@ void VulkanRenderer::UpdateSwapchainSyncObjects() {
     }
 }
 
-void VulkanRenderer::CreatePipelineLayout() {
-    // Pipeline layout with global descriptor set.
-    vk::DescriptorSetLayout setLayouts[] = {*_globalDescriptorSetLayout};
-
-    vk::PipelineLayoutCreateInfo layoutInfo{};
-    layoutInfo.setLayoutCount = 1;
-    layoutInfo.pSetLayouts = setLayouts;
-    layoutInfo.pushConstantRangeCount = 0;
-    layoutInfo.pPushConstantRanges = nullptr;
-
-    _pipelineLayout = _core->GetRaiiDevice().createPipelineLayout(layoutInfo);
-}
-
-void VulkanRenderer::CreateGraphicsPipeline() {
-    const auto& device = _core->GetRaiiDevice();
-    const std::filesystem::path shaderPath{GFX_VULKAN_SHADER_PATH};
-
-    // Load shader modules (environment shaders with GlobalUniforms).
-    auto vertModule = vkshader::LoadShaderModule(device, shaderPath / "environment.vert.spv");
-    auto fragModule = vkshader::LoadShaderModule(device, shaderPath / "environment.frag.spv");
-
-    if (!*vertModule || !*fragModule) {
-        throw std::runtime_error("Failed to load shader modules");
-    }
-
-    // Shader stages
-    std::array shaderStages = {
-        vkshader::CreateShaderStageInfo(vk::ShaderStageFlagBits::eVertex, vertModule),
-        vkshader::CreateShaderStageInfo(vk::ShaderStageFlagBits::eFragment, fragModule),
-    };
-
-    // Vertex input: empty (using gl_VertexIndex in shader).
-    vk::PipelineVertexInputStateCreateInfo vertexInputInfo{};
-
-    // Input assembly: triangle list.
-    vk::PipelineInputAssemblyStateCreateInfo inputAssembly{};
-    inputAssembly.topology = vk::PrimitiveTopology::eTriangleList;
-    inputAssembly.primitiveRestartEnable = VK_FALSE;
-
-    // Viewport and scissor: dynamic state.
-    vk::PipelineViewportStateCreateInfo viewportState{};
-    viewportState.viewportCount = 1;
-    viewportState.scissorCount = 1;
-
-    // Rasterizer
-    vk::PipelineRasterizationStateCreateInfo rasterizer{};
-    rasterizer.depthClampEnable = VK_FALSE;
-    rasterizer.rasterizerDiscardEnable = VK_FALSE;
-    rasterizer.polygonMode = vk::PolygonMode::eFill;
-    rasterizer.lineWidth = 1.0f;
-    rasterizer.cullMode = vk::CullModeFlagBits::eNone;
-    rasterizer.frontFace = vk::FrontFace::eCounterClockwise;
-    rasterizer.depthBiasEnable = VK_FALSE;
-
-    // Multisampling: disabled.
-    vk::PipelineMultisampleStateCreateInfo multisampling{};
-    multisampling.sampleShadingEnable = VK_FALSE;
-    multisampling.rasterizationSamples = vk::SampleCountFlagBits::e1;
-
-    // Depth/stencil: enabled for depth testing.
-    vk::PipelineDepthStencilStateCreateInfo depthStencil{};
-    depthStencil.depthTestEnable = VK_TRUE;
-    depthStencil.depthWriteEnable = VK_TRUE;
-    depthStencil.depthCompareOp = vk::CompareOp::eLessOrEqual;
-    depthStencil.depthBoundsTestEnable = VK_FALSE;
-    depthStencil.stencilTestEnable = VK_FALSE;
-
-    // Color blending: no blending, write all components.
-    vk::PipelineColorBlendAttachmentState colorBlendAttachment{};
-    colorBlendAttachment.colorWriteMask =
-        vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
-        vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
-    colorBlendAttachment.blendEnable = VK_FALSE;
-
-    vk::PipelineColorBlendStateCreateInfo colorBlending{};
-    colorBlending.logicOpEnable = VK_FALSE;
-    colorBlending.attachmentCount = 1;
-    colorBlending.pAttachments = &colorBlendAttachment;
-
-    // Dynamic state: viewport and scissor.
-    std::array dynamicStates = {
-        vk::DynamicState::eViewport,
-        vk::DynamicState::eScissor,
-    };
-
-    vk::PipelineDynamicStateCreateInfo dynamicState{};
-    dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
-    dynamicState.pDynamicStates = dynamicStates.data();
-
-    // Create the graphics pipeline.
-    vk::GraphicsPipelineCreateInfo pipelineInfo{};
-    pipelineInfo.stageCount = static_cast<uint32_t>(shaderStages.size());
-    pipelineInfo.pStages = shaderStages.data();
-    pipelineInfo.pVertexInputState = &vertexInputInfo;
-    pipelineInfo.pInputAssemblyState = &inputAssembly;
-    pipelineInfo.pViewportState = &viewportState;
-    pipelineInfo.pRasterizationState = &rasterizer;
-    pipelineInfo.pMultisampleState = &multisampling;
-    pipelineInfo.pDepthStencilState = &depthStencil;
-    pipelineInfo.pColorBlendState = &colorBlending;
-    pipelineInfo.pDynamicState = &dynamicState;
-    pipelineInfo.layout = *_pipelineLayout;
-    pipelineInfo.renderPass = *_renderPass;
-    pipelineInfo.subpass = 0;
-
-    _graphicsPipeline = device.createGraphicsPipeline(nullptr, pipelineInfo);
-
-    VK_LOG_INFO("Graphics pipeline created.");
-}
+// -------------------------------------------------------------------------
+// Global resources
 
 void VulkanRenderer::CreateUniformBuffers() {
     const vk::DeviceSize bufferSize = sizeof(GlobalUniforms);
@@ -659,16 +582,123 @@ void VulkanRenderer::CreateDescriptorSets() {
     VK_LOG_INFO("Descriptor sets created and updated.");
 }
 
-void VulkanRenderer::UpdateUniforms(const glm::mat4& /*modelMatrix*/,
-                                    const CameraUniformsInput& camera) {
-    GlobalUniforms ubo{};
-    ubo.viewMatrix = camera.viewMatrix;
-    ubo.projectionMatrix = camera.projectionMatrix;
-    ubo.inverseViewMatrix = glm::inverse(camera.viewMatrix);
-    ubo.inverseProjectionMatrix = glm::inverse(camera.projectionMatrix);
-    ubo.cameraPosition = camera.cameraPosition;
+void VulkanRenderer::CreatePipelineLayout() {
+    // Pipeline layout with global descriptor set and push constants for model matrix.
+    vk::DescriptorSetLayout setLayouts[] = {*_globalDescriptorSetLayout};
 
-    std::memcpy(_globalUniformBuffersMapped[_currentFrame], &ubo, sizeof(ubo));
+    // Push constant for model uniforms (model matrix + normal matrix).
+    vk::PushConstantRange pushConstantRange{};
+    pushConstantRange.stageFlags = vk::ShaderStageFlagBits::eVertex;
+    pushConstantRange.offset = 0;
+    pushConstantRange.size = sizeof(ModelUniforms);
+
+    vk::PipelineLayoutCreateInfo layoutInfo{};
+    layoutInfo.setLayoutCount = 1;
+    layoutInfo.pSetLayouts = setLayouts;
+    layoutInfo.pushConstantRangeCount = 1;
+    layoutInfo.pPushConstantRanges = &pushConstantRange;
+
+    _pipelineLayout = _core->GetRaiiDevice().createPipelineLayout(layoutInfo);
+}
+
+// -------------------------------------------------------------------------
+// Environment
+
+void VulkanRenderer::CreateEnvironmentPipeline() {
+    const auto& device = _core->GetRaiiDevice();
+    const std::filesystem::path shaderPath{GFX_VULKAN_SHADER_PATH};
+
+    // Load shader modules (environment shaders with GlobalUniforms).
+    auto vertModule = vkshader::LoadShaderModule(device, shaderPath / "environment.vert.spv");
+    auto fragModule = vkshader::LoadShaderModule(device, shaderPath / "environment.frag.spv");
+
+    if (!*vertModule || !*fragModule) {
+        throw std::runtime_error("Failed to load shader modules");
+    }
+
+    // Shader stages
+    std::array shaderStages = {
+        vkshader::CreateShaderStageInfo(vk::ShaderStageFlagBits::eVertex, vertModule),
+        vkshader::CreateShaderStageInfo(vk::ShaderStageFlagBits::eFragment, fragModule),
+    };
+
+    // Vertex input: empty (using gl_VertexIndex in shader).
+    vk::PipelineVertexInputStateCreateInfo vertexInputInfo{};
+
+    // Input assembly: triangle list.
+    vk::PipelineInputAssemblyStateCreateInfo inputAssembly{};
+    inputAssembly.topology = vk::PrimitiveTopology::eTriangleList;
+    inputAssembly.primitiveRestartEnable = VK_FALSE;
+
+    // Viewport and scissor: dynamic state.
+    vk::PipelineViewportStateCreateInfo viewportState{};
+    viewportState.viewportCount = 1;
+    viewportState.scissorCount = 1;
+
+    // Rasterizer
+    vk::PipelineRasterizationStateCreateInfo rasterizer{};
+    rasterizer.depthClampEnable = VK_FALSE;
+    rasterizer.rasterizerDiscardEnable = VK_FALSE;
+    rasterizer.polygonMode = vk::PolygonMode::eFill;
+    rasterizer.lineWidth = 1.0f;
+    rasterizer.cullMode = vk::CullModeFlagBits::eNone;
+    rasterizer.frontFace = vk::FrontFace::eCounterClockwise;
+    rasterizer.depthBiasEnable = VK_FALSE;
+
+    // Multisampling: disabled.
+    vk::PipelineMultisampleStateCreateInfo multisampling{};
+    multisampling.sampleShadingEnable = VK_FALSE;
+    multisampling.rasterizationSamples = vk::SampleCountFlagBits::e1;
+
+    // Depth/stencil: depth test enabled but writes disabled (skybox doesn't occlude anything).
+    vk::PipelineDepthStencilStateCreateInfo depthStencil{};
+    depthStencil.depthTestEnable = VK_TRUE;
+    depthStencil.depthWriteEnable = VK_FALSE; // Don't write depth - model renders on top
+    depthStencil.depthCompareOp = vk::CompareOp::eLessOrEqual;
+    depthStencil.depthBoundsTestEnable = VK_FALSE;
+    depthStencil.stencilTestEnable = VK_FALSE;
+
+    // Color blending: no blending, write all components.
+    vk::PipelineColorBlendAttachmentState colorBlendAttachment{};
+    colorBlendAttachment.colorWriteMask =
+        vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
+        vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
+    colorBlendAttachment.blendEnable = VK_FALSE;
+
+    vk::PipelineColorBlendStateCreateInfo colorBlending{};
+    colorBlending.logicOpEnable = VK_FALSE;
+    colorBlending.attachmentCount = 1;
+    colorBlending.pAttachments = &colorBlendAttachment;
+
+    // Dynamic state: viewport and scissor.
+    std::array dynamicStates = {
+        vk::DynamicState::eViewport,
+        vk::DynamicState::eScissor,
+    };
+
+    vk::PipelineDynamicStateCreateInfo dynamicState{};
+    dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
+    dynamicState.pDynamicStates = dynamicStates.data();
+
+    // Create the graphics pipeline.
+    vk::GraphicsPipelineCreateInfo pipelineInfo{};
+    pipelineInfo.stageCount = static_cast<uint32_t>(shaderStages.size());
+    pipelineInfo.pStages = shaderStages.data();
+    pipelineInfo.pVertexInputState = &vertexInputInfo;
+    pipelineInfo.pInputAssemblyState = &inputAssembly;
+    pipelineInfo.pViewportState = &viewportState;
+    pipelineInfo.pRasterizationState = &rasterizer;
+    pipelineInfo.pMultisampleState = &multisampling;
+    pipelineInfo.pDepthStencilState = &depthStencil;
+    pipelineInfo.pColorBlendState = &colorBlending;
+    pipelineInfo.pDynamicState = &dynamicState;
+    pipelineInfo.layout = *_pipelineLayout;
+    pipelineInfo.renderPass = *_renderPass;
+    pipelineInfo.subpass = 0;
+
+    _environmentPipeline = device.createGraphicsPipeline(nullptr, pipelineInfo);
+
+    VK_LOG_INFO("Environment pipeline created.");
 }
 
 void VulkanRenderer::CreatePlaceholderCubemap() {
@@ -736,7 +766,7 @@ void VulkanRenderer::CreatePlaceholderCubemap() {
 
     _cubemapSampler = device.createSampler(samplerInfo);
 
-    // Transition image layout to shader read optimal using a one-time command buffer.
+    // Clear and transition image layout using a one-time command buffer.
     vk::CommandBufferAllocateInfo cmdAllocInfo{};
     cmdAllocInfo.level = vk::CommandBufferLevel::ePrimary;
     cmdAllocInfo.commandPool = *_commandPool;
@@ -749,22 +779,46 @@ void VulkanRenderer::CreatePlaceholderCubemap() {
     beginInfo.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
     cmd.begin(beginInfo);
 
-    vk::ImageMemoryBarrier barrier{};
-    barrier.oldLayout = vk::ImageLayout::eUndefined;
-    barrier.newLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
-    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.image = *_placeholderCubemap;
-    barrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
-    barrier.subresourceRange.baseMipLevel = 0;
-    barrier.subresourceRange.levelCount = 1;
-    barrier.subresourceRange.baseArrayLayer = 0;
-    barrier.subresourceRange.layerCount = 6;
-    barrier.srcAccessMask = vk::AccessFlagBits::eNone;
-    barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
+    vk::ImageSubresourceRange subresourceRange{};
+    subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+    subresourceRange.baseMipLevel = 0;
+    subresourceRange.levelCount = 1;
+    subresourceRange.baseArrayLayer = 0;
+    subresourceRange.layerCount = 6;
+
+    // Transition to transfer dst for clearing.
+    vk::ImageMemoryBarrier toTransferBarrier{};
+    toTransferBarrier.oldLayout = vk::ImageLayout::eUndefined;
+    toTransferBarrier.newLayout = vk::ImageLayout::eTransferDstOptimal;
+    toTransferBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toTransferBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toTransferBarrier.image = *_placeholderCubemap;
+    toTransferBarrier.subresourceRange = subresourceRange;
+    toTransferBarrier.srcAccessMask = vk::AccessFlagBits::eNone;
+    toTransferBarrier.dstAccessMask = vk::AccessFlagBits::eTransferWrite;
 
     cmd.pipelineBarrier(vk::PipelineStageFlagBits::eTopOfPipe,
-                        vk::PipelineStageFlagBits::eFragmentShader, {}, nullptr, nullptr, barrier);
+                        vk::PipelineStageFlagBits::eTransfer, {}, nullptr, nullptr, toTransferBarrier);
+
+    // Clear to white.
+    vk::ClearColorValue clearColor{std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f}};
+    cmd.clearColorImage(*_placeholderCubemap, vk::ImageLayout::eTransferDstOptimal, clearColor,
+                        subresourceRange);
+
+    // Transition to shader read.
+    vk::ImageMemoryBarrier toShaderBarrier{};
+    toShaderBarrier.oldLayout = vk::ImageLayout::eTransferDstOptimal;
+    toShaderBarrier.newLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+    toShaderBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toShaderBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toShaderBarrier.image = *_placeholderCubemap;
+    toShaderBarrier.subresourceRange = subresourceRange;
+    toShaderBarrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
+    toShaderBarrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
+
+    cmd.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
+                        vk::PipelineStageFlagBits::eFragmentShader, {}, nullptr, nullptr,
+                        toShaderBarrier);
 
     cmd.end();
 
@@ -777,4 +831,287 @@ void VulkanRenderer::CreatePlaceholderCubemap() {
     _core->GetDevice().waitIdle();
 
     VK_LOG_INFO("Placeholder cubemap created ({}x{} per face).", size, size);
+}
+
+// -------------------------------------------------------------------------
+// Model
+
+void VulkanRenderer::CreateVertexBuffer(const Model& model) {
+    const auto& vertices = model.GetVertices();
+    if (vertices.empty()) {
+        VK_LOG_WARNING("CreateVertexBuffer: No vertices in model.");
+        return;
+    }
+
+    vk::DeviceSize bufferSize = sizeof(Model::Vertex) * vertices.size();
+
+    // Create staging buffer (host-visible).
+    vk::raii::Buffer stagingBuffer{nullptr};
+    vk::raii::DeviceMemory stagingBufferMemory{nullptr};
+    _core->CreateBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferSrc,
+                        vk::MemoryPropertyFlagBits::eHostVisible |
+                            vk::MemoryPropertyFlagBits::eHostCoherent,
+                        stagingBuffer, stagingBufferMemory);
+
+    // Copy vertex data to staging buffer.
+    void* data = stagingBufferMemory.mapMemory(0, bufferSize);
+    std::memcpy(data, vertices.data(), static_cast<size_t>(bufferSize));
+    stagingBufferMemory.unmapMemory();
+
+    // Create device-local vertex buffer.
+    _core->CreateBuffer(bufferSize,
+                        vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eVertexBuffer,
+                        vk::MemoryPropertyFlagBits::eDeviceLocal, _vertexBuffer, _vertexBufferMemory);
+
+    // Copy from staging to device-local buffer.
+    CopyBuffer(*stagingBuffer, *_vertexBuffer, bufferSize);
+
+    VK_LOG_INFO("Created vertex buffer with {} vertices ({} bytes).", vertices.size(), bufferSize);
+}
+
+void VulkanRenderer::CreateIndexBuffer(const Model& model) {
+    const auto& indices = model.GetIndices();
+    if (indices.empty()) {
+        VK_LOG_WARNING("CreateIndexBuffer: No indices in model.");
+        return;
+    }
+
+    _indexCount = static_cast<uint32_t>(indices.size());
+    vk::DeviceSize bufferSize = sizeof(uint32_t) * indices.size();
+
+    // Create staging buffer (host-visible).
+    vk::raii::Buffer stagingBuffer{nullptr};
+    vk::raii::DeviceMemory stagingBufferMemory{nullptr};
+    _core->CreateBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferSrc,
+                        vk::MemoryPropertyFlagBits::eHostVisible |
+                            vk::MemoryPropertyFlagBits::eHostCoherent,
+                        stagingBuffer, stagingBufferMemory);
+
+    // Copy index data to staging buffer.
+    void* data = stagingBufferMemory.mapMemory(0, bufferSize);
+    std::memcpy(data, indices.data(), static_cast<size_t>(bufferSize));
+    stagingBufferMemory.unmapMemory();
+
+    // Create device-local index buffer.
+    _core->CreateBuffer(bufferSize,
+                        vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eIndexBuffer,
+                        vk::MemoryPropertyFlagBits::eDeviceLocal, _indexBuffer, _indexBufferMemory);
+
+    // Copy from staging to device-local buffer.
+    CopyBuffer(*stagingBuffer, *_indexBuffer, bufferSize);
+
+    VK_LOG_INFO("Created index buffer with {} indices ({} bytes).", indices.size(), bufferSize);
+}
+
+void VulkanRenderer::CreateModelPipeline() {
+    const auto& device = _core->GetRaiiDevice();
+    const std::filesystem::path shaderPath{GFX_VULKAN_SHADER_PATH};
+
+    // Load shader modules.
+    auto vertModule = vkshader::LoadShaderModule(device, shaderPath / "model.vert.spv");
+    auto fragModule = vkshader::LoadShaderModule(device, shaderPath / "model.frag.spv");
+
+    if (!*vertModule || !*fragModule) {
+        throw std::runtime_error("Failed to load model shader modules");
+    }
+
+    // Shader stages.
+    std::array shaderStages = {
+        vkshader::CreateShaderStageInfo(vk::ShaderStageFlagBits::eVertex, vertModule),
+        vkshader::CreateShaderStageInfo(vk::ShaderStageFlagBits::eFragment, fragModule),
+    };
+
+    // Vertex input binding: single binding for Model::Vertex.
+    vk::VertexInputBindingDescription bindingDescription{};
+    bindingDescription.binding = 0;
+    bindingDescription.stride = sizeof(Model::Vertex);
+    bindingDescription.inputRate = vk::VertexInputRate::eVertex;
+
+    // Vertex input attributes (matching Model::Vertex layout).
+    std::array<vk::VertexInputAttributeDescription, 6> attributeDescriptions{};
+
+    // Position (vec3)
+    attributeDescriptions[0].binding = 0;
+    attributeDescriptions[0].location = 0;
+    attributeDescriptions[0].format = vk::Format::eR32G32B32Sfloat;
+    attributeDescriptions[0].offset = offsetof(Model::Vertex, _position);
+
+    // Normal (vec3)
+    attributeDescriptions[1].binding = 0;
+    attributeDescriptions[1].location = 1;
+    attributeDescriptions[1].format = vk::Format::eR32G32B32Sfloat;
+    attributeDescriptions[1].offset = offsetof(Model::Vertex, _normal);
+
+    // Tangent (vec4)
+    attributeDescriptions[2].binding = 0;
+    attributeDescriptions[2].location = 2;
+    attributeDescriptions[2].format = vk::Format::eR32G32B32A32Sfloat;
+    attributeDescriptions[2].offset = offsetof(Model::Vertex, _tangent);
+
+    // TexCoord0 (vec2)
+    attributeDescriptions[3].binding = 0;
+    attributeDescriptions[3].location = 3;
+    attributeDescriptions[3].format = vk::Format::eR32G32Sfloat;
+    attributeDescriptions[3].offset = offsetof(Model::Vertex, _texCoord0);
+
+    // TexCoord1 (vec2)
+    attributeDescriptions[4].binding = 0;
+    attributeDescriptions[4].location = 4;
+    attributeDescriptions[4].format = vk::Format::eR32G32Sfloat;
+    attributeDescriptions[4].offset = offsetof(Model::Vertex, _texCoord1);
+
+    // Color (vec4)
+    attributeDescriptions[5].binding = 0;
+    attributeDescriptions[5].location = 5;
+    attributeDescriptions[5].format = vk::Format::eR32G32B32A32Sfloat;
+    attributeDescriptions[5].offset = offsetof(Model::Vertex, _color);
+
+    vk::PipelineVertexInputStateCreateInfo vertexInputInfo{};
+    vertexInputInfo.vertexBindingDescriptionCount = 1;
+    vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
+    vertexInputInfo.vertexAttributeDescriptionCount =
+        static_cast<uint32_t>(attributeDescriptions.size());
+    vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();
+
+    // Input assembly: triangle list.
+    vk::PipelineInputAssemblyStateCreateInfo inputAssembly{};
+    inputAssembly.topology = vk::PrimitiveTopology::eTriangleList;
+    inputAssembly.primitiveRestartEnable = VK_FALSE;
+
+    // Viewport and scissor: dynamic state.
+    vk::PipelineViewportStateCreateInfo viewportState{};
+    viewportState.viewportCount = 1;
+    viewportState.scissorCount = 1;
+
+    // Rasterizer: backface culling enabled for models.
+    vk::PipelineRasterizationStateCreateInfo rasterizer{};
+    rasterizer.depthClampEnable = VK_FALSE;
+    rasterizer.rasterizerDiscardEnable = VK_FALSE;
+    rasterizer.polygonMode = vk::PolygonMode::eFill;
+    rasterizer.lineWidth = 1.0f;
+    rasterizer.cullMode = vk::CullModeFlagBits::eBack;
+    rasterizer.frontFace = vk::FrontFace::eCounterClockwise;
+    rasterizer.depthBiasEnable = VK_FALSE;
+
+    // Multisampling: disabled.
+    vk::PipelineMultisampleStateCreateInfo multisampling{};
+    multisampling.sampleShadingEnable = VK_FALSE;
+    multisampling.rasterizationSamples = vk::SampleCountFlagBits::e1;
+
+    // Depth/stencil: enabled for depth testing.
+    vk::PipelineDepthStencilStateCreateInfo depthStencil{};
+    depthStencil.depthTestEnable = VK_TRUE;
+    depthStencil.depthWriteEnable = VK_TRUE;
+    depthStencil.depthCompareOp = vk::CompareOp::eLess;
+    depthStencil.depthBoundsTestEnable = VK_FALSE;
+    depthStencil.stencilTestEnable = VK_FALSE;
+
+    // Color blending: no blending, write all components.
+    vk::PipelineColorBlendAttachmentState colorBlendAttachment{};
+    colorBlendAttachment.colorWriteMask =
+        vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
+        vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
+    colorBlendAttachment.blendEnable = VK_FALSE;
+
+    vk::PipelineColorBlendStateCreateInfo colorBlending{};
+    colorBlending.logicOpEnable = VK_FALSE;
+    colorBlending.attachmentCount = 1;
+    colorBlending.pAttachments = &colorBlendAttachment;
+
+    // Dynamic state: viewport and scissor.
+    std::array dynamicStates = {
+        vk::DynamicState::eViewport,
+        vk::DynamicState::eScissor,
+    };
+
+    vk::PipelineDynamicStateCreateInfo dynamicState{};
+    dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
+    dynamicState.pDynamicStates = dynamicStates.data();
+
+    // Create the graphics pipeline.
+    vk::GraphicsPipelineCreateInfo pipelineInfo{};
+    pipelineInfo.stageCount = static_cast<uint32_t>(shaderStages.size());
+    pipelineInfo.pStages = shaderStages.data();
+    pipelineInfo.pVertexInputState = &vertexInputInfo;
+    pipelineInfo.pInputAssemblyState = &inputAssembly;
+    pipelineInfo.pViewportState = &viewportState;
+    pipelineInfo.pRasterizationState = &rasterizer;
+    pipelineInfo.pMultisampleState = &multisampling;
+    pipelineInfo.pDepthStencilState = &depthStencil;
+    pipelineInfo.pColorBlendState = &colorBlending;
+    pipelineInfo.pDynamicState = &dynamicState;
+    pipelineInfo.layout = *_pipelineLayout;
+    pipelineInfo.renderPass = *_renderPass;
+    pipelineInfo.subpass = 0;
+
+    _modelPipeline = device.createGraphicsPipeline(nullptr, pipelineInfo);
+
+    VK_LOG_INFO("Model pipeline created.");
+}
+
+// -------------------------------------------------------------------------
+// Frame update
+
+void VulkanRenderer::UpdateUniforms(const glm::mat4& /*modelMatrix*/,
+                                    const CameraUniformsInput& camera) {
+    GlobalUniforms ubo{};
+    ubo.viewMatrix = camera.viewMatrix;
+    ubo.projectionMatrix = camera.projectionMatrix;
+    ubo.inverseViewMatrix = glm::inverse(camera.viewMatrix);
+    ubo.inverseProjectionMatrix = glm::inverse(camera.projectionMatrix);
+    ubo.cameraPosition = camera.cameraPosition;
+
+    std::memcpy(_globalUniformBuffersMapped[_currentFrame], &ubo, sizeof(ubo));
+}
+
+// -------------------------------------------------------------------------
+// Helpers
+
+vk::Format VulkanRenderer::FindDepthFormat() const {
+    // Preferred depth formats in order of preference.
+    const std::vector<vk::Format> candidates = {
+        vk::Format::eD32Sfloat,
+        vk::Format::eD32SfloatS8Uint,
+        vk::Format::eD24UnormS8Uint,
+    };
+
+    for (vk::Format format : candidates) {
+        vk::FormatProperties props = _core->GetRaiiPhysicalDevice().getFormatProperties(format);
+
+        // Check if format supports depth stencil attachment.
+        if (props.optimalTilingFeatures & vk::FormatFeatureFlagBits::eDepthStencilAttachment) {
+            return format;
+        }
+    }
+
+    throw std::runtime_error("Failed to find supported depth format!");
+}
+
+void VulkanRenderer::CopyBuffer(vk::Buffer srcBuffer, vk::Buffer dstBuffer, vk::DeviceSize size) {
+    // Allocate a one-time command buffer.
+    vk::CommandBufferAllocateInfo allocInfo{};
+    allocInfo.level = vk::CommandBufferLevel::ePrimary;
+    allocInfo.commandPool = *_commandPool;
+    allocInfo.commandBufferCount = 1;
+
+    auto cmdBuffers = _core->GetRaiiDevice().allocateCommandBuffers(allocInfo);
+    auto& cmd = cmdBuffers[0];
+
+    vk::CommandBufferBeginInfo beginInfo{};
+    beginInfo.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+    cmd.begin(beginInfo);
+
+    vk::BufferCopy copyRegion{};
+    copyRegion.size = size;
+    cmd.copyBuffer(srcBuffer, dstBuffer, copyRegion);
+
+    cmd.end();
+
+    vk::SubmitInfo submitInfo{};
+    vk::CommandBuffer cmdBuf = *cmd;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &cmdBuf;
+
+    _core->GetGraphicsQueue().submit(submitInfo);
+    _core->GetDevice().waitIdle();
 }
