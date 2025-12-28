@@ -42,7 +42,7 @@
 
 static bool s_registered = [] {
     return BackendRegistry::Instance().Register(
-        "webgpu", []() { return std::make_unique<WebgpuRenderer>(); });
+        "webgpu", [](GLFWwindow* window) { return std::make_unique<WebgpuRenderer>(window); });
 }();
 
 //----------------------------------------------------------------------
@@ -211,9 +211,7 @@ void CreateEnvironmentTexture(wgpu::Device device, wgpu::TextureViewDimension ty
 //----------------------------------------------------------------------
 // Renderer Class implementation
 
-void WebgpuRenderer::Initialize(GLFWwindow* window, const Environment& environment,
-                                const Model& model) {
-    _window = window;
+WebgpuRenderer::WebgpuRenderer(GLFWwindow* window) : _window(window) {
 #if defined(GFX_USE_DAWN_NATIVE_PROC)
     // Initialize Dawn proc table before creating WebGPU instance.
     // Only needed when using dawn_native/dawn_proc (Xcode generator workaround).
@@ -314,20 +312,10 @@ void WebgpuRenderer::Initialize(GLFWwindow* window, const Environment& environme
         });
     _instance.WaitAny(deviceFuture, UINT64_MAX);
 
-    _isShutdown = false;
-    InitGraphics(environment, model);
+    InitGraphics();
 }
 
 WebgpuRenderer::~WebgpuRenderer() {
-    Shutdown();
-}
-
-void WebgpuRenderer::Shutdown() {
-    if (_isShutdown) {
-        return;
-    }
-    _isShutdown = true;
-
     // Wait for GPU to finish all pending work before releasing resources.
     if (_device) {
         wgpu::Future workDoneFuture = _device.GetQueue().OnSubmittedWorkDone(
@@ -396,7 +384,7 @@ void WebgpuRenderer::Shutdown() {
     _adapter = nullptr;
     _instance = nullptr;
 
-    WGPU_LOG_INFO("Shutdown complete.");
+    WGPU_LOG_INFO("Destroyed.");
 }
 
 void WebgpuRenderer::Resize() {
@@ -422,23 +410,27 @@ void WebgpuRenderer::Render(const glm::mat4& modelMatrix, const CameraUniformsIn
 
     pass.SetBindGroup(0, _globalBindGroup);
 
+    // Draw environment (uses default textures if SetEnvironment wasn't called).
     pass.SetPipeline(_environmentPipeline);
     pass.Draw(3, 1, 0, 0);
 
-    pass.SetVertexBuffer(0, _vertexBuffer);
-    pass.SetIndexBuffer(_indexBuffer, wgpu::IndexFormat::Uint32);
+    // Draw model meshes (if SetModel was called).
+    if (_vertexBuffer && _indexBuffer) {
+        pass.SetVertexBuffer(0, _vertexBuffer);
+        pass.SetIndexBuffer(_indexBuffer, wgpu::IndexFormat::Uint32);
 
-    pass.SetPipeline(_modelPipelineOpaque);
-    for (const auto& subMesh : _opaqueMeshes) {
-        pass.SetBindGroup(1, _materials[subMesh._materialIndex]._bindGroup);
-        pass.DrawIndexed(subMesh._indexCount, 1u, subMesh._firstIndex);
-    }
+        pass.SetPipeline(_modelPipelineOpaque);
+        for (const auto& subMesh : _opaqueMeshes) {
+            pass.SetBindGroup(1, _materials[subMesh._materialIndex]._bindGroup);
+            pass.DrawIndexed(subMesh._indexCount, 1u, subMesh._firstIndex);
+        }
 
-    pass.SetPipeline(_modelPipelineTransparent);
-    for (const auto& depthInfo : _transparentMeshesDepthSorted) {
-        const SubMesh& subMesh = _transparentMeshes[depthInfo._meshIndex];
-        pass.SetBindGroup(1, _materials[subMesh._materialIndex]._bindGroup);
-        pass.DrawIndexed(subMesh._indexCount, 1u, subMesh._firstIndex);
+        pass.SetPipeline(_modelPipelineTransparent);
+        for (const auto& depthInfo : _transparentMeshesDepthSorted) {
+            const SubMesh& subMesh = _transparentMeshes[depthInfo._meshIndex];
+            pass.SetBindGroup(1, _materials[subMesh._materialIndex]._bindGroup);
+            pass.DrawIndexed(subMesh._indexCount, 1u, subMesh._firstIndex);
+        }
     }
 
     pass.End();
@@ -463,7 +455,7 @@ void WebgpuRenderer::ReloadShaders() {
     CreateModelRenderPipelines();
 }
 
-void WebgpuRenderer::UpdateModel(const Model& model) {
+void WebgpuRenderer::SetModel(const Model& model) {
     auto t0 = std::chrono::high_resolution_clock::now();
 
     _vertexBuffer = nullptr;
@@ -479,7 +471,7 @@ void WebgpuRenderer::UpdateModel(const Model& model) {
     WGPU_LOG_INFO("Updated Model resources in {:.2f}ms", totalMs);
 }
 
-void WebgpuRenderer::UpdateEnvironment(const Environment& environment) {
+void WebgpuRenderer::SetEnvironment(const Environment& environment) {
     auto t0 = std::chrono::high_resolution_clock::now();
 
     _environmentTexture = nullptr;
@@ -499,7 +491,7 @@ void WebgpuRenderer::UpdateEnvironment(const Environment& environment) {
     WGPU_LOG_INFO("Updated Environment resources in {:.2f}ms", totalMs);
 }
 
-void WebgpuRenderer::InitGraphics(const Environment& environment, const Model& model) {
+void WebgpuRenderer::InitGraphics() {
     ConfigureSurface();
     CreateDepthTexture();
 
@@ -516,9 +508,8 @@ void WebgpuRenderer::InitGraphics(const Environment& environment, const Model& m
 
     CreateUniformBuffers();
 
-    UpdateEnvironment(environment);
-
-    UpdateModel(model);
+    // Create global bind group with default textures (environment not set yet).
+    CreateGlobalBindGroup();
 }
 
 void WebgpuRenderer::CreateDefaultTextures() {

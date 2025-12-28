@@ -23,22 +23,13 @@
 
 static bool s_registered = [] {
     return BackendRegistry::Instance().Register(
-        "vulkan", []() { return std::make_unique<VulkanRenderer>(); });
+        "vulkan", [](GLFWwindow* window) { return std::make_unique<VulkanRenderer>(window); });
 }();
 
 //----------------------------------------------------------------------
 // Construction / Destruction
 
-VulkanRenderer::~VulkanRenderer() {
-    Shutdown();
-}
-
-//----------------------------------------------------------------------
-// IRenderer Interface
-
-void VulkanRenderer::Initialize(GLFWwindow* window, [[maybe_unused]] const Environment& environment,
-                                [[maybe_unused]] const Model& model) {
-    _window = window;
+VulkanRenderer::VulkanRenderer(GLFWwindow* window) : _window(window) {
     _core = std::make_unique<VulkanCore>(window);
     _swapchain = std::make_unique<VulkanSwapchain>(*_core, window);
 
@@ -59,17 +50,16 @@ void VulkanRenderer::Initialize(GLFWwindow* window, [[maybe_unused]] const Envir
     VK_LOG_INFO("Initialization complete.");
 }
 
-void VulkanRenderer::Shutdown() {
-    if (!_core) {
-        return;
+VulkanRenderer::~VulkanRenderer() {
+    if (_core) {
+        _core->GetDevice().waitIdle();
     }
-
-    // Wait for GPU to finish before releasing resources.
-    _core->GetDevice().waitIdle();
-
-    VK_LOG_INFO("Shutdown complete.");
     // Resources cleaned up automatically via RAII (reverse declaration order).
+    VK_LOG_INFO("Destroyed.");
 }
+
+//----------------------------------------------------------------------
+// IRenderer Interface
 
 void VulkanRenderer::Resize() {
     if (_swapchain && _core && _window) {
@@ -211,11 +201,11 @@ void VulkanRenderer::Render(const glm::mat4& modelMatrix, const CameraUniformsIn
     _currentFrame = (_currentFrame + 1) % vkbackend::kMaxFramesInFlight;
 }
 
-void VulkanRenderer::UpdateModel([[maybe_unused]] const Model& model) {
+void VulkanRenderer::SetModel([[maybe_unused]] const Model& model) {
     // Not yet implemented.
 }
 
-void VulkanRenderer::UpdateEnvironment([[maybe_unused]] const Environment& environment) {
+void VulkanRenderer::SetEnvironment([[maybe_unused]] const Environment& environment) {
     // Not yet implemented.
 }
 

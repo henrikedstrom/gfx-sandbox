@@ -12,16 +12,17 @@
 
 // Forward Declarations
 class IRenderer;
+struct GLFWwindow;
 
 // BackendRegistry Class
 class BackendRegistry {
   public:
-    using FactoryFunc = std::function<std::unique_ptr<IRenderer>()>;
+    using FactoryFunc = std::function<std::unique_ptr<IRenderer>(GLFWwindow*)>;
 
     static BackendRegistry& Instance();
 
     bool Register(const std::string& name, FactoryFunc factory);
-    std::unique_ptr<IRenderer> Create(const std::string& name = "") const;
+    std::unique_ptr<IRenderer> Create(const std::string& name, GLFWwindow* window) const;
     std::vector<std::string> GetAvailableBackends() const;
     std::string GetDefaultBackend() const;
 

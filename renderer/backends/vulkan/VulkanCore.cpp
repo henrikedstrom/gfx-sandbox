@@ -3,10 +3,10 @@
 
 // Standard Library Headers
 #include <cstring>
-#include <iostream>
 #include <optional>
 #include <set>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 // Third-Party Library Headers
@@ -222,13 +222,35 @@ VulkanCore::VulkanCore(GLFWwindow* window) {
     // Initialize the dynamic dispatcher.
     VULKAN_HPP_DEFAULT_DISPATCHER.init(_context.getDispatcher()->vkGetInstanceProcAddr);
 
+    //----------------------------------
+    // Verify Vulkan version support.
+
+    constexpr uint32_t kRequiredVersion = VK_API_VERSION_1_3;
+
+    uint32_t supportedVersion = 0;
+    if (vkEnumerateInstanceVersion(&supportedVersion) != VK_SUCCESS) {
+        // vkEnumerateInstanceVersion is Vulkan 1.1+; if it fails, assume 1.0
+        supportedVersion = VK_API_VERSION_1_0;
+    }
+
+    if (supportedVersion < kRequiredVersion) {
+        throw std::runtime_error(
+            "Vulkan version " + std::to_string(VK_API_VERSION_MAJOR(kRequiredVersion)) + "." +
+            std::to_string(VK_API_VERSION_MINOR(kRequiredVersion)) +
+            " required, but driver only supports " +
+            std::to_string(VK_API_VERSION_MAJOR(supportedVersion)) + "." +
+            std::to_string(VK_API_VERSION_MINOR(supportedVersion)) + ".");
+    }
+
+    //----------------------------------
     // Create the Vulkan instance.
+
     if (enableValidationLayers && !CheckValidationLayerSupport()) {
         throw std::runtime_error("Validation layers requested but not available.");
     }
 
     vk::ApplicationInfo appInfo{};
-    appInfo.apiVersion = VK_API_VERSION_1_3;
+    appInfo.apiVersion = kRequiredVersion;
 
     auto extensions = GetRequiredInstanceExtensions();
 
@@ -267,7 +289,9 @@ VulkanCore::VulkanCore(GLFWwindow* window) {
 
     VK_LOG_INFO("Instance created successfully.");
 
+    //----------------------------------
     // Create window surface via GLFW.
+
     VkSurfaceKHR surfaceHandle = VK_NULL_HANDLE;
     vk::Result result =
         vk::Result(glfwCreateWindowSurface(static_cast<VkInstance>(*_instance), window,
@@ -281,7 +305,9 @@ VulkanCore::VulkanCore(GLFWwindow* window) {
     // Wrap the surface handle in a RAII wrapper.
     _surface = vk::raii::SurfaceKHR(_instance, vk::SurfaceKHR(surfaceHandle));
 
-    // Select physical device with required queue families.
+    //----------------------------------
+    // Select physical device.
+
     vk::PhysicalDevice selectedDevice = SelectPhysicalDevice(*_instance, *_surface);
     _physicalDevice =
         vk::raii::PhysicalDevice(_instance, static_cast<VkPhysicalDevice>(selectedDevice));
@@ -299,6 +325,7 @@ VulkanCore::VulkanCore(GLFWwindow* window) {
     VK_LOG_INFO("Physical device selected. Graphics queue: {}, Present queue: {}",
                 _graphicsQueueFamily, _presentQueueFamily);
 
+    //----------------------------------
     // Create logical device and retrieve queues.
 
     // Collect unique queue families (graphics and present may be the same).

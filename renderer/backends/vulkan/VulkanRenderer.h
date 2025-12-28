@@ -22,23 +22,21 @@ class VulkanSwapchain;
 
 class VulkanRenderer final : public IRenderer {
   public:
-    VulkanRenderer() = default;
+    explicit VulkanRenderer(GLFWwindow* window);
     ~VulkanRenderer() override;
 
+    // Non-copyable and non-movable
     VulkanRenderer(const VulkanRenderer&) = delete;
     VulkanRenderer& operator=(const VulkanRenderer&) = delete;
     VulkanRenderer(VulkanRenderer&&) = delete;
     VulkanRenderer& operator=(VulkanRenderer&&) = delete;
 
-    void Initialize(GLFWwindow* window, const Environment& environment,
-                    const Model& model) override;
-    void Shutdown() override;
+    // IRenderer interface implementation
     void Resize() override;
     void Render(const glm::mat4& modelMatrix, const CameraUniformsInput& camera) override;
-
+    void SetModel(const Model& model) override;
+    void SetEnvironment(const Environment& environment) override;
     void ReloadShaders() override {}
-    void UpdateModel(const Model& model) override;
-    void UpdateEnvironment(const Environment& environment) override;
 
   private:
     // Uniform data structures (must match shader layout)

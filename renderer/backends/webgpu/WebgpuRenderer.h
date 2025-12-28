@@ -23,7 +23,7 @@ class Model;
 // WebgpuRenderer Class
 class WebgpuRenderer final : public IRenderer {
   public:
-    WebgpuRenderer() = default;
+    explicit WebgpuRenderer(GLFWwindow* window);
     ~WebgpuRenderer() override;
 
     // Non-copyable and non-movable
@@ -33,18 +33,15 @@ class WebgpuRenderer final : public IRenderer {
     WebgpuRenderer& operator=(WebgpuRenderer&&) = delete;
 
     // IRenderer interface implementation
-    void Initialize(GLFWwindow* window, const Environment& environment,
-                    const Model& model) override;
-    void Shutdown() override;
     void Resize() override;
     void Render(const glm::mat4& modelMatrix, const CameraUniformsInput& camera) override;
+    void SetModel(const Model& model) override;
+    void SetEnvironment(const Environment& environment) override;
     void ReloadShaders() override;
-    void UpdateModel(const Model& model) override;
-    void UpdateEnvironment(const Environment& environment) override;
 
   private:
     // Private utility methods
-    void InitGraphics(const Environment& environment, const Model& model);
+    void InitGraphics();
     void ConfigureSurface();
     void CreateDepthTexture();
     std::pair<uint32_t, uint32_t> GetFramebufferSize() const;
@@ -174,7 +171,4 @@ class WebgpuRenderer final : public IRenderer {
 
     // Window reference for querying framebuffer size
     GLFWwindow* _window{nullptr};
-
-    // Shutdown state
-    bool _isShutdown{false};
 };

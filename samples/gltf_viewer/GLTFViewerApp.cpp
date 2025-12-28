@@ -62,14 +62,15 @@ void GltfViewerApp::OnInit() {
     RepositionCamera(_camera, _model);
 
     // Create renderer via backend registry.
-    _renderer = BackendRegistry::Instance().Create(_backendName);
+    _renderer = BackendRegistry::Instance().Create(_backendName, GetWindow());
     if (!_renderer) {
         std::cerr << "Failed to create renderer. Exiting." << std::endl;
         RequestQuit();
         return;
     }
 
-    _renderer->Initialize(GetWindow(), _environment, _model);
+    _renderer->SetEnvironment(_environment);
+    _renderer->SetModel(_model);
 
     // Store the actual backend name (in case we used the default).
     if (_backendName.empty()) {
@@ -95,22 +96,20 @@ void GltfViewerApp::SwitchToNextBackend() {
 
     std::cout << "Switching backend: " << _backendName << " -> " << nextBackend << std::endl;
 
-    // Shutdown and release the current renderer.
-    if (_renderer) {
-        _renderer->Shutdown();
-        _renderer.reset();
-    }
+    // Release the current renderer (destructor handles cleanup).
+    _renderer.reset();
 
     // Create the new renderer.
     _backendName = nextBackend;
-    _renderer = BackendRegistry::Instance().Create(_backendName);
+    _renderer = BackendRegistry::Instance().Create(_backendName, GetWindow());
     if (!_renderer) {
         std::cerr << "Failed to create renderer for backend: " << _backendName << std::endl;
         return;
     }
 
-    // Initialize with the current model and environment.
-    _renderer->Initialize(GetWindow(), _environment, _model);
+    // Set the current model and environment.
+    _renderer->SetEnvironment(_environment);
+    _renderer->SetModel(_model);
 }
 
 void GltfViewerApp::OnFrame(float dtSeconds) {
@@ -167,13 +166,13 @@ void GltfViewerApp::OnFileDropped(const std::string& filename, uint8_t* data, in
         _model.Load(filename, data, static_cast<uint32_t>(length));
         RepositionCamera(_camera, _model);
         if (_renderer) {
-            _renderer->UpdateModel(_model);
+            _renderer->SetModel(_model);
         }
     } else if (extension == "hdr") {
         std::cout << "Loading environment: " << filename << std::endl;
         _environment.Load(filename, data, static_cast<uint32_t>(length));
         if (_renderer) {
-            _renderer->UpdateEnvironment(_environment);
+            _renderer->SetEnvironment(_environment);
         }
     } else {
         std::cerr << "Unsupported file type: " << filename << std::endl;
