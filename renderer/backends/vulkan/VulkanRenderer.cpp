@@ -28,6 +28,203 @@ static bool s_registered = [] {
 }();
 
 //----------------------------------------------------------------------
+// Internal Texture Utilities
+
+namespace {
+
+/// @brief Creates a Vulkan image and allocates device memory for it.
+void CreateImage(VulkanCore& core, uint32_t width, uint32_t height, vk::Format format,
+                 vk::ImageTiling tiling, vk::ImageUsageFlags usage,
+                 vk::MemoryPropertyFlags properties, vk::raii::Image& image,
+                 vk::raii::DeviceMemory& imageMemory) {
+    vk::ImageCreateInfo imageInfo{};
+    imageInfo.imageType = vk::ImageType::e2D;
+    imageInfo.extent.width = width;
+    imageInfo.extent.height = height;
+    imageInfo.extent.depth = 1;
+    imageInfo.mipLevels = 1;
+    imageInfo.arrayLayers = 1;
+    imageInfo.format = format;
+    imageInfo.tiling = tiling;
+    imageInfo.initialLayout = vk::ImageLayout::eUndefined;
+    imageInfo.usage = usage;
+    imageInfo.samples = vk::SampleCountFlagBits::e1;
+    imageInfo.sharingMode = vk::SharingMode::eExclusive;
+
+    image = core.GetRaiiDevice().createImage(imageInfo);
+
+    vk::MemoryRequirements memRequirements = image.getMemoryRequirements();
+
+    vk::MemoryAllocateInfo allocInfo{};
+    allocInfo.allocationSize = memRequirements.size;
+    allocInfo.memoryTypeIndex = core.FindMemoryType(memRequirements.memoryTypeBits, properties);
+
+    imageMemory = core.GetRaiiDevice().allocateMemory(allocInfo);
+    image.bindMemory(*imageMemory, 0);
+}
+
+/// @brief Transitions an image from one layout to another using a pipeline barrier.
+void TransitionImageLayout(VulkanCore& core, vk::raii::CommandPool& commandPool, vk::Image image,
+                           [[maybe_unused]] vk::Format format, vk::ImageLayout oldLayout,
+                           vk::ImageLayout newLayout) {
+    vk::CommandBufferAllocateInfo allocInfo{};
+    allocInfo.level = vk::CommandBufferLevel::ePrimary;
+    allocInfo.commandPool = *commandPool;
+    allocInfo.commandBufferCount = 1;
+
+    auto cmdBuffers = core.GetRaiiDevice().allocateCommandBuffers(allocInfo);
+    auto& cmd = cmdBuffers[0];
+
+    vk::CommandBufferBeginInfo beginInfo{};
+    beginInfo.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+    cmd.begin(beginInfo);
+
+    vk::ImageMemoryBarrier barrier{};
+    barrier.oldLayout = oldLayout;
+    barrier.newLayout = newLayout;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = image;
+    barrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+    barrier.subresourceRange.baseMipLevel = 0;
+    barrier.subresourceRange.levelCount = 1;
+    barrier.subresourceRange.baseArrayLayer = 0;
+    barrier.subresourceRange.layerCount = 1;
+
+    vk::PipelineStageFlags sourceStage;
+    vk::PipelineStageFlags destinationStage;
+
+    if (oldLayout == vk::ImageLayout::eUndefined &&
+        newLayout == vk::ImageLayout::eTransferDstOptimal) {
+        barrier.srcAccessMask = vk::AccessFlagBits::eNone;
+        barrier.dstAccessMask = vk::AccessFlagBits::eTransferWrite;
+
+        sourceStage = vk::PipelineStageFlagBits::eTopOfPipe;
+        destinationStage = vk::PipelineStageFlagBits::eTransfer;
+    } else if (oldLayout == vk::ImageLayout::eTransferDstOptimal &&
+               newLayout == vk::ImageLayout::eShaderReadOnlyOptimal) {
+        barrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
+        barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
+
+        sourceStage = vk::PipelineStageFlagBits::eTransfer;
+        destinationStage = vk::PipelineStageFlagBits::eFragmentShader;
+    } else {
+        throw std::invalid_argument("Unsupported layout transition!");
+    }
+
+    cmd.pipelineBarrier(sourceStage, destinationStage, vk::DependencyFlags{}, nullptr, nullptr,
+                        barrier);
+
+    cmd.end();
+
+    vk::SubmitInfo submitInfo{};
+    vk::CommandBuffer cmdBuf = *cmd;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &cmdBuf;
+
+    core.GetGraphicsQueue().submit(submitInfo);
+    core.GetDevice().waitIdle();
+}
+
+/// @brief Copies data from a buffer to an image using a transfer command.
+void CopyBufferToImage(VulkanCore& core, vk::raii::CommandPool& commandPool, vk::Buffer buffer,
+                       vk::Image image, uint32_t width, uint32_t height) {
+    vk::CommandBufferAllocateInfo allocInfo{};
+    allocInfo.level = vk::CommandBufferLevel::ePrimary;
+    allocInfo.commandPool = *commandPool;
+    allocInfo.commandBufferCount = 1;
+
+    auto cmdBuffers = core.GetRaiiDevice().allocateCommandBuffers(allocInfo);
+    auto& cmd = cmdBuffers[0];
+
+    vk::CommandBufferBeginInfo beginInfo{};
+    beginInfo.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+    cmd.begin(beginInfo);
+
+    vk::BufferImageCopy region{};
+    region.bufferOffset = 0;
+    region.bufferRowLength = 0;
+    region.bufferImageHeight = 0;
+    region.imageSubresource.aspectMask = vk::ImageAspectFlagBits::eColor;
+    region.imageSubresource.mipLevel = 0;
+    region.imageSubresource.baseArrayLayer = 0;
+    region.imageSubresource.layerCount = 1;
+    region.imageOffset = vk::Offset3D{0, 0, 0};
+    region.imageExtent = vk::Extent3D{width, height, 1};
+
+    cmd.copyBufferToImage(buffer, image, vk::ImageLayout::eTransferDstOptimal, region);
+
+    cmd.end();
+
+    vk::SubmitInfo submitInfo{};
+    vk::CommandBuffer cmdBuf = *cmd;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &cmdBuf;
+
+    core.GetGraphicsQueue().submit(submitInfo);
+    core.GetDevice().waitIdle();
+}
+
+/// @brief Creates a GPU texture from a Model::Texture by uploading via staging buffer.
+void CreateTextureFromModel(VulkanCore& core, vk::raii::CommandPool& commandPool,
+                            const Model::Texture* texture, vk::Format format,
+                            vk::raii::Image& image, vk::raii::DeviceMemory& imageMemory,
+                            vk::raii::ImageView& imageView) {
+    if (!texture || texture->_data.empty()) {
+        VK_LOG_WARNING("CreateTextureFromModel: Invalid or empty texture data.");
+        return;
+    }
+
+    const uint32_t width = texture->_width;
+    const uint32_t height = texture->_height;
+    const vk::DeviceSize imageSize = texture->_data.size();
+
+    // Create staging buffer.
+    vk::raii::Buffer stagingBuffer{nullptr};
+    vk::raii::DeviceMemory stagingBufferMemory{nullptr};
+    core.CreateBuffer(imageSize, vk::BufferUsageFlagBits::eTransferSrc,
+                      vk::MemoryPropertyFlagBits::eHostVisible |
+                          vk::MemoryPropertyFlagBits::eHostCoherent,
+                      stagingBuffer, stagingBufferMemory);
+
+    // Copy texture data to staging buffer.
+    void* data = stagingBufferMemory.mapMemory(0, imageSize);
+    std::memcpy(data, texture->_data.data(), static_cast<size_t>(imageSize));
+    stagingBufferMemory.unmapMemory();
+
+    // Create GPU image.
+    CreateImage(core, width, height, format, vk::ImageTiling::eOptimal,
+                vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
+                vk::MemoryPropertyFlagBits::eDeviceLocal, image, imageMemory);
+
+    // Transition image to transfer destination.
+    TransitionImageLayout(core, commandPool, *image, format, vk::ImageLayout::eUndefined,
+                          vk::ImageLayout::eTransferDstOptimal);
+
+    // Copy buffer to image.
+    CopyBufferToImage(core, commandPool, *stagingBuffer, *image, width, height);
+
+    // Transition image to shader read.
+    TransitionImageLayout(core, commandPool, *image, format, vk::ImageLayout::eTransferDstOptimal,
+                          vk::ImageLayout::eShaderReadOnlyOptimal);
+
+    // Create image view.
+    vk::ImageViewCreateInfo viewInfo{};
+    viewInfo.image = *image;
+    viewInfo.viewType = vk::ImageViewType::e2D;
+    viewInfo.format = format;
+    viewInfo.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+    viewInfo.subresourceRange.baseMipLevel = 0;
+    viewInfo.subresourceRange.levelCount = 1;
+    viewInfo.subresourceRange.baseArrayLayer = 0;
+    viewInfo.subresourceRange.layerCount = 1;
+
+    imageView = core.GetRaiiDevice().createImageView(viewInfo);
+}
+
+} // namespace
+
+//----------------------------------------------------------------------
 // Construction / Destruction
 
 VulkanRenderer::VulkanRenderer(GLFWwindow* window) : _window(window) {
@@ -567,21 +764,30 @@ void VulkanRenderer::CreateDescriptorPool() {
     _descriptorPools.emplace_back();
     auto& poolInfo = _descriptorPools.back();
 
-    std::array<vk::DescriptorPoolSize, 2> poolSizes{};
+    std::array<vk::DescriptorPoolSize, 4> poolSizes{};
 
     // Uniform buffers (global + per-material).
     poolSizes[0].type = vk::DescriptorType::eUniformBuffer;
-    poolSizes[0].descriptorCount = DescriptorPoolInfo::kMaxSetsPerPool;
+    poolSizes[0].descriptorCount =
+        vkbackend::kMaxFramesInFlight + DescriptorPoolInfo::kMaxSetsPerPool;
 
-    // Combined image samplers (environment + material textures).
+    // Combined image samplers (for environment cubemap in global set).
     poolSizes[1].type = vk::DescriptorType::eCombinedImageSampler;
-    poolSizes[1].descriptorCount = DescriptorPoolInfo::kMaxSetsPerPool * 5;
+    poolSizes[1].descriptorCount = vkbackend::kMaxFramesInFlight;
+
+    // Samplers (for material textures).
+    poolSizes[2].type = vk::DescriptorType::eSampler;
+    poolSizes[2].descriptorCount = DescriptorPoolInfo::kMaxSetsPerPool;
+
+    // Sampled images (5 textures per material).
+    poolSizes[3].type = vk::DescriptorType::eSampledImage;
+    poolSizes[3].descriptorCount = DescriptorPoolInfo::kMaxSetsPerPool * 5;
 
     vk::DescriptorPoolCreateInfo createInfo{};
     createInfo.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
     createInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
     createInfo.pPoolSizes = poolSizes.data();
-    createInfo.maxSets = DescriptorPoolInfo::kMaxSetsPerPool;
+    createInfo.maxSets = vkbackend::kMaxFramesInFlight + DescriptorPoolInfo::kMaxSetsPerPool;
 
     poolInfo.pool = _core->GetRaiiDevice().createDescriptorPool(createInfo);
     poolInfo.allocatedSets = 0;
@@ -603,19 +809,30 @@ vk::raii::DescriptorPool& VulkanRenderer::GetOrCreateDescriptorPool() {
     _descriptorPools.emplace_back();
     auto& newPoolInfo = _descriptorPools.back();
 
-    std::array<vk::DescriptorPoolSize, 2> poolSizes{};
+    std::array<vk::DescriptorPoolSize, 4> poolSizes{};
 
+    // Uniform buffers (global + per-material)
     poolSizes[0].type = vk::DescriptorType::eUniformBuffer;
-    poolSizes[0].descriptorCount = DescriptorPoolInfo::kMaxSetsPerPool;
+    poolSizes[0].descriptorCount =
+        vkbackend::kMaxFramesInFlight + DescriptorPoolInfo::kMaxSetsPerPool;
 
+    // Combined image samplers (for environment cubemap in global set)
     poolSizes[1].type = vk::DescriptorType::eCombinedImageSampler;
-    poolSizes[1].descriptorCount = DescriptorPoolInfo::kMaxSetsPerPool * 5;
+    poolSizes[1].descriptorCount = vkbackend::kMaxFramesInFlight;
+
+    // Samplers (for material textures)
+    poolSizes[2].type = vk::DescriptorType::eSampler;
+    poolSizes[2].descriptorCount = DescriptorPoolInfo::kMaxSetsPerPool;
+
+    // Sampled images (5 textures per material)
+    poolSizes[3].type = vk::DescriptorType::eSampledImage;
+    poolSizes[3].descriptorCount = DescriptorPoolInfo::kMaxSetsPerPool * 5;
 
     vk::DescriptorPoolCreateInfo createInfo{};
     createInfo.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
     createInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
     createInfo.pPoolSizes = poolSizes.data();
-    createInfo.maxSets = DescriptorPoolInfo::kMaxSetsPerPool;
+    createInfo.maxSets = vkbackend::kMaxFramesInFlight + DescriptorPoolInfo::kMaxSetsPerPool;
 
     newPoolInfo.pool = _core->GetRaiiDevice().createDescriptorPool(createInfo);
     newPoolInfo.allocatedSets = 1;
@@ -931,19 +1148,30 @@ void VulkanRenderer::CreateDefaultCubemap() {
 void VulkanRenderer::CreateModelDescriptorSetLayout() {
     // Model descriptor set layout (set 1) contains:
     // - Binding 0: MaterialUniforms
-    // Will eventually also contain:
     // - Binding 1: Sampler
     // - Bindings 2-6: Textures (baseColor, metallicRoughness, normal, occlusion, emissive)
 
-    // Binding 0: MaterialUniforms uniform buffer.
-    vk::DescriptorSetLayoutBinding materialUboLayoutBinding{};
-    materialUboLayoutBinding.binding = 0;
-    materialUboLayoutBinding.descriptorType = vk::DescriptorType::eUniformBuffer;
-    materialUboLayoutBinding.descriptorCount = 1;
-    materialUboLayoutBinding.stageFlags = vk::ShaderStageFlagBits::eFragment;
-    materialUboLayoutBinding.pImmutableSamplers = nullptr;
+    std::array<vk::DescriptorSetLayoutBinding, 7> bindings{};
 
-    std::array bindings = {materialUboLayoutBinding};
+    // Binding 0: MaterialUniforms uniform buffer
+    bindings[0].binding = 0;
+    bindings[0].descriptorType = vk::DescriptorType::eUniformBuffer;
+    bindings[0].descriptorCount = 1;
+    bindings[0].stageFlags = vk::ShaderStageFlagBits::eFragment;
+
+    // Binding 1: Texture sampler
+    bindings[1].binding = 1;
+    bindings[1].descriptorType = vk::DescriptorType::eSampler;
+    bindings[1].descriptorCount = 1;
+    bindings[1].stageFlags = vk::ShaderStageFlagBits::eFragment;
+
+    // Bindings 2-6: PBR textures (all combined image samplers become sampled images)
+    for (uint32_t i = 0; i < 5; ++i) {
+        bindings[2 + i].binding = 2 + i;
+        bindings[2 + i].descriptorType = vk::DescriptorType::eSampledImage;
+        bindings[2 + i].descriptorCount = 1;
+        bindings[2 + i].stageFlags = vk::ShaderStageFlagBits::eFragment;
+    }
 
     vk::DescriptorSetLayoutCreateInfo layoutInfo{};
     layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
@@ -951,7 +1179,7 @@ void VulkanRenderer::CreateModelDescriptorSetLayout() {
 
     _modelDescriptorSetLayout = _core->GetRaiiDevice().createDescriptorSetLayout(layoutInfo);
 
-    VK_LOG_INFO("Model descriptor set layout created with material uniforms.");
+    VK_LOG_INFO("Model descriptor set layout created with material uniforms and textures.");
 }
 
 void VulkanRenderer::CreateModelPipelineLayout() {
@@ -1009,23 +1237,24 @@ void VulkanRenderer::CreateDefaultTextures() {
             memcpy(data, pixelData, static_cast<size_t>(imageSize));
             stagingBufferMemory.unmapMemory();
 
-            // Create image
-            CreateImage(1, 1, format, vk::ImageTiling::eOptimal,
+            // Create image.
+            CreateImage(*_core, 1, 1, format, vk::ImageTiling::eOptimal,
                         vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
                         vk::MemoryPropertyFlagBits::eDeviceLocal, image, imageMemory);
 
-            // Transition image to transfer dst
-            TransitionImageLayout(*image, format, vk::ImageLayout::eUndefined,
+            // Transition image to transfer dst.
+            TransitionImageLayout(*_core, _commandPool, *image, format, vk::ImageLayout::eUndefined,
                                   vk::ImageLayout::eTransferDstOptimal);
 
-            // Copy buffer to image
-            CopyBufferToImage(*stagingBuffer, *image, 1, 1);
+            // Copy buffer to image.
+            CopyBufferToImage(*_core, _commandPool, *stagingBuffer, *image, 1, 1);
 
-            // Transition image to shader read
-            TransitionImageLayout(*image, format, vk::ImageLayout::eTransferDstOptimal,
+            // Transition image to shader read.
+            TransitionImageLayout(*_core, _commandPool, *image, format,
+                                  vk::ImageLayout::eTransferDstOptimal,
                                   vk::ImageLayout::eShaderReadOnlyOptimal);
 
-            // Create image view
+            // Create image view.
             vk::ImageViewCreateInfo viewInfo{};
             viewInfo.image = *image;
             viewInfo.viewType = vk::ImageViewType::e2D;
@@ -1207,10 +1436,49 @@ void VulkanRenderer::CreateMaterials(const Model& model) {
         // Copy initial data to the buffer.
         std::memcpy(dstMat._uniformBufferMapped, &dstMat._uniforms, bufferSize);
 
-        VK_LOG_INFO("Created material {} uniform buffer ({} bytes).", i, bufferSize);
+        // Load PBR textures from model (leave as nullptr if not present, will use defaults in
+        // descriptor sets)
+
+        // Base color texture (sRGB)
+        if (const Model::Texture* tex = model.GetTexture(srcMat._baseColorTexture)) {
+            CreateTextureFromModel(*_core, _commandPool, tex, vk::Format::eR8G8B8A8Srgb,
+                                   dstMat._baseColorTexture, dstMat._baseColorTextureMemory,
+                                   dstMat._baseColorTextureView);
+        }
+
+        // Metallic-roughness texture (linear)
+        if (const Model::Texture* tex = model.GetTexture(srcMat._metallicRoughnessTexture)) {
+            CreateTextureFromModel(*_core, _commandPool, tex, vk::Format::eR8G8B8A8Unorm,
+                                   dstMat._metallicRoughnessTexture,
+                                   dstMat._metallicRoughnessTextureMemory,
+                                   dstMat._metallicRoughnessTextureView);
+        }
+
+        // Normal texture (linear)
+        if (const Model::Texture* tex = model.GetTexture(srcMat._normalTexture)) {
+            CreateTextureFromModel(*_core, _commandPool, tex, vk::Format::eR8G8B8A8Unorm,
+                                   dstMat._normalTexture, dstMat._normalTextureMemory,
+                                   dstMat._normalTextureView);
+        }
+
+        // Occlusion texture (linear)
+        if (const Model::Texture* tex = model.GetTexture(srcMat._occlusionTexture)) {
+            CreateTextureFromModel(*_core, _commandPool, tex, vk::Format::eR8G8B8A8Unorm,
+                                   dstMat._occlusionTexture, dstMat._occlusionTextureMemory,
+                                   dstMat._occlusionTextureView);
+        }
+
+        // Emissive texture (sRGB)
+        if (const Model::Texture* tex = model.GetTexture(srcMat._emissiveTexture)) {
+            CreateTextureFromModel(*_core, _commandPool, tex, vk::Format::eR8G8B8A8Srgb,
+                                   dstMat._emissiveTexture, dstMat._emissiveTextureMemory,
+                                   dstMat._emissiveTextureView);
+        }
+
+        VK_LOG_INFO("Created material {} with uniform buffer and textures.", i);
     }
 
-    VK_LOG_INFO("Created {} materials.", _materials.size());
+    VK_LOG_INFO("Created {} materials with textures.", _materials.size());
 }
 
 void VulkanRenderer::CreateDefaultMaterial() {
@@ -1257,6 +1525,8 @@ void VulkanRenderer::CreateDefaultMaterial() {
     // Copy initial data to the buffer.
     std::memcpy(defaultMat._uniformBufferMapped, &defaultMat._uniforms, bufferSize);
 
+    // Note: Texture views left as nullptr, will use defaults in descriptor sets
+
     _materials.push_back(std::move(defaultMat));
 
     VK_LOG_INFO("Created default material at index {}.", _materials.size() - 1);
@@ -1285,24 +1555,76 @@ void VulkanRenderer::CreateMaterialDescriptorSets() {
         auto sets = device.allocateDescriptorSets(allocInfo);
         mat._descriptorSet = std::move(sets[0]);
 
-        // Binding 0: Material uniform buffer.
+        // Prepare descriptor writes (7 bindings: 1 UBO + 1 sampler + 5 textures)
+        std::array<vk::WriteDescriptorSet, 7> descriptorWrites{};
+
+        // Binding 0: Material uniform buffer
         vk::DescriptorBufferInfo bufferInfo{};
         bufferInfo.buffer = *mat._uniformBuffer;
         bufferInfo.offset = 0;
         bufferInfo.range = sizeof(MaterialUniforms);
 
-        vk::WriteDescriptorSet descriptorWrite{};
-        descriptorWrite.dstSet = *mat._descriptorSet;
-        descriptorWrite.dstBinding = 0;
-        descriptorWrite.dstArrayElement = 0;
-        descriptorWrite.descriptorType = vk::DescriptorType::eUniformBuffer;
-        descriptorWrite.descriptorCount = 1;
-        descriptorWrite.pBufferInfo = &bufferInfo;
+        descriptorWrites[0].dstSet = *mat._descriptorSet;
+        descriptorWrites[0].dstBinding = 0;
+        descriptorWrites[0].dstArrayElement = 0;
+        descriptorWrites[0].descriptorType = vk::DescriptorType::eUniformBuffer;
+        descriptorWrites[0].descriptorCount = 1;
+        descriptorWrites[0].pBufferInfo = &bufferInfo;
 
-        _core->GetDevice().updateDescriptorSets(descriptorWrite, nullptr);
+        // Binding 1: Texture sampler
+        vk::DescriptorImageInfo samplerInfo{};
+        samplerInfo.sampler = *_modelTextureSampler;
+
+        descriptorWrites[1].dstSet = *mat._descriptorSet;
+        descriptorWrites[1].dstBinding = 1;
+        descriptorWrites[1].dstArrayElement = 0;
+        descriptorWrites[1].descriptorType = vk::DescriptorType::eSampler;
+        descriptorWrites[1].descriptorCount = 1;
+        descriptorWrites[1].pImageInfo = &samplerInfo;
+
+        // Prepare image infos for textures (use defaults if material texture is nullptr)
+        std::array<vk::DescriptorImageInfo, 5> imageInfos{};
+
+        // Binding 2: Base color texture (use default sRGB if not loaded)
+        imageInfos[0].imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+        imageInfos[0].imageView =
+            *mat._baseColorTextureView ? *mat._baseColorTextureView : *_defaultSRGBTextureView;
+
+        // Binding 3: Metallic-roughness texture (use default UNorm if not loaded)
+        imageInfos[1].imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+        imageInfos[1].imageView = *mat._metallicRoughnessTextureView
+                                      ? *mat._metallicRoughnessTextureView
+                                      : *_defaultUNormTextureView;
+
+        // Binding 4: Normal texture (use default normal if not loaded)
+        imageInfos[2].imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+        imageInfos[2].imageView =
+            *mat._normalTextureView ? *mat._normalTextureView : *_defaultNormalTextureView;
+
+        // Binding 5: Occlusion texture (use default UNorm if not loaded)
+        imageInfos[3].imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+        imageInfos[3].imageView =
+            *mat._occlusionTextureView ? *mat._occlusionTextureView : *_defaultUNormTextureView;
+
+        // Binding 6: Emissive texture (use default sRGB if not loaded)
+        imageInfos[4].imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+        imageInfos[4].imageView =
+            *mat._emissiveTextureView ? *mat._emissiveTextureView : *_defaultSRGBTextureView;
+
+        // Set up texture descriptor writes
+        for (uint32_t t = 0; t < 5; ++t) {
+            descriptorWrites[2 + t].dstSet = *mat._descriptorSet;
+            descriptorWrites[2 + t].dstBinding = 2 + t;
+            descriptorWrites[2 + t].dstArrayElement = 0;
+            descriptorWrites[2 + t].descriptorType = vk::DescriptorType::eSampledImage;
+            descriptorWrites[2 + t].descriptorCount = 1;
+            descriptorWrites[2 + t].pImageInfo = &imageInfos[t];
+        }
+
+        _core->GetDevice().updateDescriptorSets(descriptorWrites, nullptr);
     }
 
-    VK_LOG_INFO("Created {} material descriptor sets.", _materials.size());
+    VK_LOG_INFO("Created {} material descriptor sets with textures.", _materials.size());
 }
 
 void VulkanRenderer::CreateModelPipeline() {
@@ -1506,135 +1828,6 @@ void VulkanRenderer::CopyBuffer(vk::Buffer srcBuffer, vk::Buffer dstBuffer, vk::
     vk::BufferCopy copyRegion{};
     copyRegion.size = size;
     cmd.copyBuffer(srcBuffer, dstBuffer, copyRegion);
-
-    cmd.end();
-
-    vk::SubmitInfo submitInfo{};
-    vk::CommandBuffer cmdBuf = *cmd;
-    submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &cmdBuf;
-
-    _core->GetGraphicsQueue().submit(submitInfo);
-    _core->GetDevice().waitIdle();
-}
-
-void VulkanRenderer::CreateImage(uint32_t width, uint32_t height, vk::Format format,
-                                 vk::ImageTiling tiling, vk::ImageUsageFlags usage,
-                                 vk::MemoryPropertyFlags properties, vk::raii::Image& image,
-                                 vk::raii::DeviceMemory& imageMemory) {
-    vk::ImageCreateInfo imageInfo{};
-    imageInfo.imageType = vk::ImageType::e2D;
-    imageInfo.extent.width = width;
-    imageInfo.extent.height = height;
-    imageInfo.extent.depth = 1;
-    imageInfo.mipLevels = 1;
-    imageInfo.arrayLayers = 1;
-    imageInfo.format = format;
-    imageInfo.tiling = tiling;
-    imageInfo.initialLayout = vk::ImageLayout::eUndefined;
-    imageInfo.usage = usage;
-    imageInfo.samples = vk::SampleCountFlagBits::e1;
-    imageInfo.sharingMode = vk::SharingMode::eExclusive;
-
-    image = _core->GetRaiiDevice().createImage(imageInfo);
-
-    vk::MemoryRequirements memRequirements = image.getMemoryRequirements();
-
-    vk::MemoryAllocateInfo allocInfo{};
-    allocInfo.allocationSize = memRequirements.size;
-    allocInfo.memoryTypeIndex = _core->FindMemoryType(memRequirements.memoryTypeBits, properties);
-
-    imageMemory = _core->GetRaiiDevice().allocateMemory(allocInfo);
-    image.bindMemory(*imageMemory, 0);
-}
-
-void VulkanRenderer::TransitionImageLayout(vk::Image image, [[maybe_unused]] vk::Format format,
-                                           vk::ImageLayout oldLayout, vk::ImageLayout newLayout) {
-    vk::CommandBufferAllocateInfo allocInfo{};
-    allocInfo.level = vk::CommandBufferLevel::ePrimary;
-    allocInfo.commandPool = *_commandPool;
-    allocInfo.commandBufferCount = 1;
-
-    auto cmdBuffers = _core->GetRaiiDevice().allocateCommandBuffers(allocInfo);
-    auto& cmd = cmdBuffers[0];
-
-    vk::CommandBufferBeginInfo beginInfo{};
-    beginInfo.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
-    cmd.begin(beginInfo);
-
-    vk::ImageMemoryBarrier barrier{};
-    barrier.oldLayout = oldLayout;
-    barrier.newLayout = newLayout;
-    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.image = image;
-    barrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
-    barrier.subresourceRange.baseMipLevel = 0;
-    barrier.subresourceRange.levelCount = 1;
-    barrier.subresourceRange.baseArrayLayer = 0;
-    barrier.subresourceRange.layerCount = 1;
-
-    vk::PipelineStageFlags sourceStage;
-    vk::PipelineStageFlags destinationStage;
-
-    if (oldLayout == vk::ImageLayout::eUndefined &&
-        newLayout == vk::ImageLayout::eTransferDstOptimal) {
-        barrier.srcAccessMask = vk::AccessFlagBits::eNone;
-        barrier.dstAccessMask = vk::AccessFlagBits::eTransferWrite;
-
-        sourceStage = vk::PipelineStageFlagBits::eTopOfPipe;
-        destinationStage = vk::PipelineStageFlagBits::eTransfer;
-    } else if (oldLayout == vk::ImageLayout::eTransferDstOptimal &&
-               newLayout == vk::ImageLayout::eShaderReadOnlyOptimal) {
-        barrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
-        barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
-
-        sourceStage = vk::PipelineStageFlagBits::eTransfer;
-        destinationStage = vk::PipelineStageFlagBits::eFragmentShader;
-    } else {
-        throw std::invalid_argument("Unsupported layout transition!");
-    }
-
-    cmd.pipelineBarrier(sourceStage, destinationStage, vk::DependencyFlags{}, nullptr, nullptr,
-                        barrier);
-
-    cmd.end();
-
-    vk::SubmitInfo submitInfo{};
-    vk::CommandBuffer cmdBuf = *cmd;
-    submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &cmdBuf;
-
-    _core->GetGraphicsQueue().submit(submitInfo);
-    _core->GetDevice().waitIdle();
-}
-
-void VulkanRenderer::CopyBufferToImage(vk::Buffer buffer, vk::Image image, uint32_t width,
-                                       uint32_t height) {
-    vk::CommandBufferAllocateInfo allocInfo{};
-    allocInfo.level = vk::CommandBufferLevel::ePrimary;
-    allocInfo.commandPool = *_commandPool;
-    allocInfo.commandBufferCount = 1;
-
-    auto cmdBuffers = _core->GetRaiiDevice().allocateCommandBuffers(allocInfo);
-    auto& cmd = cmdBuffers[0];
-
-    vk::CommandBufferBeginInfo beginInfo{};
-    beginInfo.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
-    cmd.begin(beginInfo);
-
-    vk::BufferImageCopy region{};
-    region.bufferOffset = 0;
-    region.bufferRowLength = 0;
-    region.bufferImageHeight = 0;
-    region.imageSubresource.aspectMask = vk::ImageAspectFlagBits::eColor;
-    region.imageSubresource.mipLevel = 0;
-    region.imageSubresource.baseArrayLayer = 0;
-    region.imageSubresource.layerCount = 1;
-    region.imageOffset = vk::Offset3D{0, 0, 0};
-    region.imageExtent = vk::Extent3D{width, height, 1};
-
-    cmd.copyBufferToImage(buffer, image, vk::ImageLayout::eTransferDstOptimal, region);
 
     cmd.end();
 

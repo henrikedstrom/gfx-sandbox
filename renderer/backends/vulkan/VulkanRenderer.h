@@ -19,6 +19,7 @@
 // Forward Declarations
 class VulkanCore;
 class VulkanSwapchain;
+class Model;
 
 class VulkanRenderer final : public IRenderer {
   public:
@@ -73,12 +74,27 @@ class VulkanRenderer final : public IRenderer {
         vk::raii::DeviceMemory _uniformBufferMemory{nullptr};
         void* _uniformBufferMapped{nullptr};
         vk::raii::DescriptorSet _descriptorSet{nullptr};
-        // TODO: Add textures later
-        // vk::raii::Image _baseColorTexture{nullptr};
-        // vk::raii::Image _metallicRoughnessTexture{nullptr};
-        // vk::raii::Image _normalTexture{nullptr};
-        // vk::raii::Image _occlusionTexture{nullptr};
-        // vk::raii::Image _emissiveTexture{nullptr};
+        
+        // PBR textures
+        vk::raii::Image _baseColorTexture{nullptr};
+        vk::raii::DeviceMemory _baseColorTextureMemory{nullptr};
+        vk::raii::ImageView _baseColorTextureView{nullptr};
+        
+        vk::raii::Image _metallicRoughnessTexture{nullptr};
+        vk::raii::DeviceMemory _metallicRoughnessTextureMemory{nullptr};
+        vk::raii::ImageView _metallicRoughnessTextureView{nullptr};
+        
+        vk::raii::Image _normalTexture{nullptr};
+        vk::raii::DeviceMemory _normalTextureMemory{nullptr};
+        vk::raii::ImageView _normalTextureView{nullptr};
+        
+        vk::raii::Image _occlusionTexture{nullptr};
+        vk::raii::DeviceMemory _occlusionTextureMemory{nullptr};
+        vk::raii::ImageView _occlusionTextureView{nullptr};
+        
+        vk::raii::Image _emissiveTexture{nullptr};
+        vk::raii::DeviceMemory _emissiveTextureMemory{nullptr};
+        vk::raii::ImageView _emissiveTextureView{nullptr};
     };
 
     struct SubMesh {
@@ -137,12 +153,6 @@ class VulkanRenderer final : public IRenderer {
     vk::Format FindDepthFormat() const;
     void CopyBuffer(vk::Buffer srcBuffer, vk::Buffer dstBuffer, vk::DeviceSize size);
     vk::raii::DescriptorPool& GetOrCreateDescriptorPool();
-    void CreateImage(uint32_t width, uint32_t height, vk::Format format, vk::ImageTiling tiling,
-                     vk::ImageUsageFlags usage, vk::MemoryPropertyFlags properties,
-                     vk::raii::Image& image, vk::raii::DeviceMemory& imageMemory);
-    void TransitionImageLayout(vk::Image image, vk::Format format, vk::ImageLayout oldLayout,
-                               vk::ImageLayout newLayout);
-    void CopyBufferToImage(vk::Buffer buffer, vk::Image image, uint32_t width, uint32_t height);
 
     // -------------------------------------------------------------------------
     // Core Vulkan resources
