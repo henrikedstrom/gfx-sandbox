@@ -254,9 +254,9 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     let worldPosition = modelUniforms.modelMatrix * vec4<f32>(in.position, 1.0);
     let worldNormal = normalize((modelUniforms.normalMatrix * vec4<f32>(in.normal, 0.0)).xyz);
 
-    // Transform tangent to world space (preserving handedness in .w)
+    // Transform tangent to world space.
     let worldTangent = vec4<f32>(
-        normalize((modelUniforms.normalMatrix * vec4<f32>(in.tangent.xyz, 0.0)).xyz),
+        normalize((modelUniforms.modelMatrix * vec4<f32>(in.tangent.xyz, 0.0)).xyz),
         in.tangent.w
     );
 
