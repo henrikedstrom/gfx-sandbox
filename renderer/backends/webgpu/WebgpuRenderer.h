@@ -49,8 +49,8 @@ class WebgpuRenderer final : public IRenderer {
     void CreateIndexBuffer(const Model& model);
     void CreateUniformBuffers();
     void CreateEnvironmentTextures(const Environment& environment);
-    void CreateSubMeshes(const Model& model);
     void CreateMaterials(const Model& model);
+    void CreateDefaultMaterial();
     void CreateGlobalBindGroup();
     void CreateEnvironmentRenderPipeline();
     void CreateModelRenderPipelines();

@@ -463,8 +463,47 @@ void WebgpuRenderer::SetModel(const Model& model) {
 
     CreateVertexBuffer(model);
     CreateIndexBuffer(model);
-    CreateSubMeshes(model);
     CreateMaterials(model);
+
+    // Define helper for checking invalid material indices.
+    const int modelMaterialCount = static_cast<int>(model.GetMaterials().size());
+    auto hasInvalidMaterialIndex = [modelMaterialCount](const Model::SubMesh& submesh) {
+        return submesh._materialIndex < 0 || submesh._materialIndex >= modelMaterialCount;
+    };
+
+    // Determine if we need a default material.
+    bool needsDefaultMaterial = std::ranges::any_of(model.GetSubMeshes(), hasInvalidMaterialIndex);
+
+    // Create default material if needed (appends to _materials).
+    int defaultMaterialIndex = -1;
+    if (needsDefaultMaterial) {
+        CreateDefaultMaterial();
+        defaultMaterialIndex = static_cast<int>(_materials.size()) - 1;
+        WGPU_LOG_WARNING("Model has invalid material indices, using default material at index {}.",
+                         defaultMaterialIndex);
+    }
+
+    // Store submesh information, remapping invalid material indices and sorting by alpha mode.
+    _opaqueMeshes.clear();
+    _transparentMeshes.clear();
+    _opaqueMeshes.reserve(model.GetSubMeshes().size());
+
+    for (const auto& srcSubMesh : model.GetSubMeshes()) {
+        int materialIndex =
+            hasInvalidMaterialIndex(srcSubMesh) ? defaultMaterialIndex : srcSubMesh._materialIndex;
+
+        SubMesh dstSubMesh = {._firstIndex = srcSubMesh._firstIndex,
+                              ._indexCount = srcSubMesh._indexCount,
+                              ._materialIndex = materialIndex,
+                              ._centroid = (srcSubMesh._minBounds + srcSubMesh._maxBounds) * 0.5f};
+
+        // Sort into opaque or transparent based on material alpha mode.
+        if (_materials[materialIndex]._uniforms.alphaMode == 2) { // 2 = Blend
+            _transparentMeshes.push_back(dstSubMesh);
+        } else {
+            _opaqueMeshes.push_back(dstSubMesh);
+        }
+    }
 
     auto t1 = std::chrono::high_resolution_clock::now();
     double totalMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
@@ -876,24 +915,6 @@ void WebgpuRenderer::CreateEnvironmentTextures(const Environment& environment) {
                                     MipmapGenerator::MipKind::Float16Cube);
 }
 
-void WebgpuRenderer::CreateSubMeshes(const Model& model) {
-    _opaqueMeshes.clear();
-    _transparentMeshes.clear();
-    _opaqueMeshes.reserve(model.GetSubMeshes().size());
-
-    for (const auto& srcSubMesh : model.GetSubMeshes()) {
-        SubMesh dstSubMesh = {._firstIndex = srcSubMesh._firstIndex,
-                              ._indexCount = srcSubMesh._indexCount,
-                              ._materialIndex = srcSubMesh._materialIndex,
-                              ._centroid = (srcSubMesh._minBounds + srcSubMesh._maxBounds) * 0.5f};
-        if (model.GetMaterials()[srcSubMesh._materialIndex]._alphaMode == Model::AlphaMode::Blend) {
-            _transparentMeshes.push_back(dstSubMesh);
-        } else {
-            _opaqueMeshes.push_back(dstSubMesh);
-        }
-    }
-}
-
 void WebgpuRenderer::CreateMaterials(const Model& model) {
     // Create mipmap generator helper.
     MipmapGenerator mipmapGenerator(_device);
@@ -1015,6 +1036,78 @@ void WebgpuRenderer::CreateMaterials(const Model& model) {
             dstMat._bindGroup = _device.CreateBindGroup(&bindGroupDescriptor);
         }
     }
+}
+
+void WebgpuRenderer::CreateDefaultMaterial() {
+    // Append a default material to the materials vector.
+    Material defaultMat;
+
+    // Create uniform buffer.
+    wgpu::BufferDescriptor bufferDescriptor{};
+    bufferDescriptor.size = sizeof(MaterialUniforms);
+    bufferDescriptor.usage = wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst;
+    defaultMat._uniformBuffer = _device.CreateBuffer(&bufferDescriptor);
+
+    // Initialize with sensible defaults (gray, non-metallic, medium roughness).
+    defaultMat._uniforms.baseColorFactor = glm::vec4(0.8f, 0.8f, 0.8f, 1.0f);
+    defaultMat._uniforms.emissiveFactor = glm::vec3(0.0f);
+    defaultMat._uniforms.metallicFactor = 0.0f;
+    defaultMat._uniforms.roughnessFactor = 0.5f;
+    defaultMat._uniforms.normalScale = 1.0f;
+    defaultMat._uniforms.occlusionStrength = 1.0f;
+    defaultMat._uniforms.alphaCutoff = 0.5f;
+    defaultMat._uniforms.alphaMode = 0; // Opaque
+
+    _device.GetQueue().WriteBuffer(defaultMat._uniformBuffer, 0, &defaultMat._uniforms,
+                                   sizeof(MaterialUniforms));
+
+    // Use default textures for all texture slots.
+    defaultMat._baseColorTexture = _defaultSRGBTexture;
+    defaultMat._metallicRoughnessTexture = _defaultUNormTexture;
+    defaultMat._normalTexture = _defaultNormalTexture;
+    defaultMat._occlusionTexture = _defaultUNormTexture;
+    defaultMat._emissiveTexture = _defaultSRGBTexture;
+
+    // Create bind group.
+    wgpu::BindGroupEntry bindGroupEntries[8]{};
+    bindGroupEntries[0].binding = 0;
+    bindGroupEntries[0].buffer = _modelUniformBuffer;
+    bindGroupEntries[0].offset = 0;
+    bindGroupEntries[0].size = sizeof(ModelUniforms);
+
+    bindGroupEntries[1].binding = 1;
+    bindGroupEntries[1].buffer = defaultMat._uniformBuffer;
+    bindGroupEntries[1].offset = 0;
+    bindGroupEntries[1].size = sizeof(MaterialUniforms);
+
+    bindGroupEntries[2].binding = 2;
+    bindGroupEntries[2].sampler = _modelTextureSampler;
+
+    bindGroupEntries[3].binding = 3;
+    bindGroupEntries[3].textureView = defaultMat._baseColorTexture.CreateView();
+
+    bindGroupEntries[4].binding = 4;
+    bindGroupEntries[4].textureView = defaultMat._metallicRoughnessTexture.CreateView();
+
+    bindGroupEntries[5].binding = 5;
+    bindGroupEntries[5].textureView = defaultMat._normalTexture.CreateView();
+
+    bindGroupEntries[6].binding = 6;
+    bindGroupEntries[6].textureView = defaultMat._occlusionTexture.CreateView();
+
+    bindGroupEntries[7].binding = 7;
+    bindGroupEntries[7].textureView = defaultMat._emissiveTexture.CreateView();
+
+    wgpu::BindGroupDescriptor bindGroupDescriptor{};
+    bindGroupDescriptor.layout = _modelBindGroupLayout;
+    bindGroupDescriptor.entryCount = 8;
+    bindGroupDescriptor.entries = bindGroupEntries;
+
+    defaultMat._bindGroup = _device.CreateBindGroup(&bindGroupDescriptor);
+
+    _materials.push_back(std::move(defaultMat));
+
+    WGPU_LOG_INFO("Created default material at index {}.", _materials.size() - 1);
 }
 
 void WebgpuRenderer::CreateGlobalBindGroup() {
