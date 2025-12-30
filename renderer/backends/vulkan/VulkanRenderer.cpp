@@ -44,6 +44,8 @@ VulkanRenderer::VulkanRenderer(GLFWwindow* window) : _window(window) {
     // Resources
     CreateUniformBuffers();
     CreateDefaultCubemap();
+    CreateDefaultTextures();
+    CreateModelSampler();
 
     // Descriptor setup
     CreateGlobalDescriptorSetLayout();
@@ -230,7 +232,7 @@ void VulkanRenderer::Render(const glm::mat4& modelMatrix, const CameraUniformsIn
     submitInfo.pSignalSemaphores = signalSemaphores;
 
     _core->GetGraphicsQueue().submit(submitInfo, *_inFlightFences[_currentFrame]);
-    
+
     //----------------------------------
     // Present.
 
@@ -584,7 +586,8 @@ void VulkanRenderer::CreateDescriptorPool() {
     poolInfo.pool = _core->GetRaiiDevice().createDescriptorPool(createInfo);
     poolInfo.allocatedSets = 0;
 
-    VK_LOG_INFO("Descriptor pool #1 created (capacity: {} sets).", DescriptorPoolInfo::kMaxSetsPerPool);
+    VK_LOG_INFO("Descriptor pool #1 created (capacity: {} sets).",
+                DescriptorPoolInfo::kMaxSetsPerPool);
 }
 
 vk::raii::DescriptorPool& VulkanRenderer::GetOrCreateDescriptorPool() {
@@ -630,7 +633,7 @@ void VulkanRenderer::CreateDescriptorSets() {
     for (uint32_t i = 0; i < vkbackend::kMaxFramesInFlight; ++i) {
         vk::DescriptorSetLayout layout = *_globalDescriptorSetLayout;
 
-    vk::DescriptorSetAllocateInfo allocInfo{};
+        vk::DescriptorSetAllocateInfo allocInfo{};
         allocInfo.descriptorPool = *GetOrCreateDescriptorPool();
         allocInfo.descriptorSetCount = 1;
         allocInfo.pSetLayouts = &layout;
@@ -925,7 +928,6 @@ void VulkanRenderer::CreateDefaultCubemap() {
 // -------------------------------------------------------------------------
 // Model
 
-
 void VulkanRenderer::CreateModelDescriptorSetLayout() {
     // Model descriptor set layout (set 1) contains:
     // - Binding 0: MaterialUniforms
@@ -972,6 +974,116 @@ void VulkanRenderer::CreateModelPipelineLayout() {
     _modelPipelineLayout = _core->GetRaiiDevice().createPipelineLayout(layoutInfo);
 
     VK_LOG_INFO("Model pipeline layout created.");
+}
+
+void VulkanRenderer::CreateDefaultTextures() {
+    // Helper lambda to create and upload a 1x1 texture.
+    auto createAndUpload1x1Texture =
+        [this](const uint8_t* pixelData, vk::Format format, vk::raii::Image& image,
+               vk::raii::DeviceMemory& imageMemory, vk::raii::ImageView& imageView) {
+            constexpr vk::DeviceSize imageSize = 4; // RGBA = 4 bytes
+
+            // Create staging buffer (declared at point of initialization)
+            vk::BufferCreateInfo bufferInfo{};
+            bufferInfo.size = imageSize;
+            bufferInfo.usage = vk::BufferUsageFlagBits::eTransferSrc;
+            bufferInfo.sharingMode = vk::SharingMode::eExclusive;
+
+            vk::raii::Buffer stagingBuffer = _core->GetRaiiDevice().createBuffer(bufferInfo);
+
+            // Allocate and bind staging buffer memory
+            vk::MemoryRequirements memRequirements = stagingBuffer.getMemoryRequirements();
+
+            vk::MemoryAllocateInfo allocInfo{};
+            allocInfo.allocationSize = memRequirements.size;
+            allocInfo.memoryTypeIndex = _core->FindMemoryType(
+                memRequirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eHostVisible |
+                                                    vk::MemoryPropertyFlagBits::eHostCoherent);
+
+            vk::raii::DeviceMemory stagingBufferMemory =
+                _core->GetRaiiDevice().allocateMemory(allocInfo);
+            stagingBuffer.bindMemory(*stagingBufferMemory, 0);
+
+            // Copy pixel data to staging buffer
+            void* data = stagingBufferMemory.mapMemory(0, imageSize);
+            memcpy(data, pixelData, static_cast<size_t>(imageSize));
+            stagingBufferMemory.unmapMemory();
+
+            // Create image
+            CreateImage(1, 1, format, vk::ImageTiling::eOptimal,
+                        vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
+                        vk::MemoryPropertyFlagBits::eDeviceLocal, image, imageMemory);
+
+            // Transition image to transfer dst
+            TransitionImageLayout(*image, format, vk::ImageLayout::eUndefined,
+                                  vk::ImageLayout::eTransferDstOptimal);
+
+            // Copy buffer to image
+            CopyBufferToImage(*stagingBuffer, *image, 1, 1);
+
+            // Transition image to shader read
+            TransitionImageLayout(*image, format, vk::ImageLayout::eTransferDstOptimal,
+                                  vk::ImageLayout::eShaderReadOnlyOptimal);
+
+            // Create image view
+            vk::ImageViewCreateInfo viewInfo{};
+            viewInfo.image = *image;
+            viewInfo.viewType = vk::ImageViewType::e2D;
+            viewInfo.format = format;
+            viewInfo.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+            viewInfo.subresourceRange.baseMipLevel = 0;
+            viewInfo.subresourceRange.levelCount = 1;
+            viewInfo.subresourceRange.baseArrayLayer = 0;
+            viewInfo.subresourceRange.layerCount = 1;
+
+            imageView = _core->GetRaiiDevice().createImageView(viewInfo);
+        };
+
+    // 1x1 white sRGB texture (for base color, emissive)
+    {
+        const uint8_t whitePixel[4] = {255, 255, 255, 255};
+        createAndUpload1x1Texture(whitePixel, vk::Format::eR8G8B8A8Srgb, _defaultSRGBTexture,
+                                  _defaultSRGBTextureMemory, _defaultSRGBTextureView);
+    }
+
+    // 1x1 white UNORM texture (for metallic/roughness, occlusion)
+    {
+        const uint8_t whitePixel[4] = {255, 255, 255, 255};
+        createAndUpload1x1Texture(whitePixel, vk::Format::eR8G8B8A8Unorm, _defaultUNormTexture,
+                                  _defaultUNormTextureMemory, _defaultUNormTextureView);
+    }
+
+    // 1x1 flat normal map (128, 128, 255, 255) UNORM
+    {
+        const uint8_t flatNormal[4] = {128, 128, 255, 255};
+        createAndUpload1x1Texture(flatNormal, vk::Format::eR8G8B8A8Unorm, _defaultNormalTexture,
+                                  _defaultNormalTextureMemory, _defaultNormalTextureView);
+    }
+
+    VK_LOG_INFO("Default textures created.");
+}
+
+void VulkanRenderer::CreateModelSampler() {
+    vk::SamplerCreateInfo samplerInfo{};
+    samplerInfo.magFilter = vk::Filter::eLinear;
+    samplerInfo.minFilter = vk::Filter::eLinear;
+    samplerInfo.addressModeU = vk::SamplerAddressMode::eRepeat;
+    samplerInfo.addressModeV = vk::SamplerAddressMode::eRepeat;
+    samplerInfo.addressModeW = vk::SamplerAddressMode::eRepeat;
+    samplerInfo.anisotropyEnable = VK_TRUE;
+    samplerInfo.maxAnisotropy = 16.0f;
+    samplerInfo.borderColor = vk::BorderColor::eIntOpaqueBlack;
+    samplerInfo.unnormalizedCoordinates = VK_FALSE;
+    samplerInfo.compareEnable = VK_FALSE;
+    samplerInfo.compareOp = vk::CompareOp::eAlways;
+    samplerInfo.mipmapMode = vk::SamplerMipmapMode::eLinear;
+    samplerInfo.mipLodBias = 0.0f;
+    samplerInfo.minLod = 0.0f;
+    samplerInfo.maxLod = 0.0f;
+
+    _modelTextureSampler = _core->GetRaiiDevice().createSampler(samplerInfo);
+
+    VK_LOG_INFO("Model texture sampler created.");
 }
 
 void VulkanRenderer::CreateVertexBuffer(const Model& model) {
@@ -1359,13 +1471,13 @@ void VulkanRenderer::UpdateUniforms(const glm::mat4& /*modelMatrix*/,
 
 vk::Format VulkanRenderer::FindDepthFormat() const {
     // Preferred depth formats in order of preference.
-    const std::vector<vk::Format> candidates = {
+    constexpr std::array<vk::Format, 3> candidates = {
         vk::Format::eD32Sfloat,
         vk::Format::eD32SfloatS8Uint,
         vk::Format::eD24UnormS8Uint,
     };
 
-    for (vk::Format format : candidates) {
+    for (const vk::Format format : candidates) {
         vk::FormatProperties props = _core->GetRaiiPhysicalDevice().getFormatProperties(format);
 
         // Check if format supports depth stencil attachment.
@@ -1394,6 +1506,135 @@ void VulkanRenderer::CopyBuffer(vk::Buffer srcBuffer, vk::Buffer dstBuffer, vk::
     vk::BufferCopy copyRegion{};
     copyRegion.size = size;
     cmd.copyBuffer(srcBuffer, dstBuffer, copyRegion);
+
+    cmd.end();
+
+    vk::SubmitInfo submitInfo{};
+    vk::CommandBuffer cmdBuf = *cmd;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &cmdBuf;
+
+    _core->GetGraphicsQueue().submit(submitInfo);
+    _core->GetDevice().waitIdle();
+}
+
+void VulkanRenderer::CreateImage(uint32_t width, uint32_t height, vk::Format format,
+                                 vk::ImageTiling tiling, vk::ImageUsageFlags usage,
+                                 vk::MemoryPropertyFlags properties, vk::raii::Image& image,
+                                 vk::raii::DeviceMemory& imageMemory) {
+    vk::ImageCreateInfo imageInfo{};
+    imageInfo.imageType = vk::ImageType::e2D;
+    imageInfo.extent.width = width;
+    imageInfo.extent.height = height;
+    imageInfo.extent.depth = 1;
+    imageInfo.mipLevels = 1;
+    imageInfo.arrayLayers = 1;
+    imageInfo.format = format;
+    imageInfo.tiling = tiling;
+    imageInfo.initialLayout = vk::ImageLayout::eUndefined;
+    imageInfo.usage = usage;
+    imageInfo.samples = vk::SampleCountFlagBits::e1;
+    imageInfo.sharingMode = vk::SharingMode::eExclusive;
+
+    image = _core->GetRaiiDevice().createImage(imageInfo);
+
+    vk::MemoryRequirements memRequirements = image.getMemoryRequirements();
+
+    vk::MemoryAllocateInfo allocInfo{};
+    allocInfo.allocationSize = memRequirements.size;
+    allocInfo.memoryTypeIndex = _core->FindMemoryType(memRequirements.memoryTypeBits, properties);
+
+    imageMemory = _core->GetRaiiDevice().allocateMemory(allocInfo);
+    image.bindMemory(*imageMemory, 0);
+}
+
+void VulkanRenderer::TransitionImageLayout(vk::Image image, [[maybe_unused]] vk::Format format,
+                                           vk::ImageLayout oldLayout, vk::ImageLayout newLayout) {
+    vk::CommandBufferAllocateInfo allocInfo{};
+    allocInfo.level = vk::CommandBufferLevel::ePrimary;
+    allocInfo.commandPool = *_commandPool;
+    allocInfo.commandBufferCount = 1;
+
+    auto cmdBuffers = _core->GetRaiiDevice().allocateCommandBuffers(allocInfo);
+    auto& cmd = cmdBuffers[0];
+
+    vk::CommandBufferBeginInfo beginInfo{};
+    beginInfo.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+    cmd.begin(beginInfo);
+
+    vk::ImageMemoryBarrier barrier{};
+    barrier.oldLayout = oldLayout;
+    barrier.newLayout = newLayout;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = image;
+    barrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+    barrier.subresourceRange.baseMipLevel = 0;
+    barrier.subresourceRange.levelCount = 1;
+    barrier.subresourceRange.baseArrayLayer = 0;
+    barrier.subresourceRange.layerCount = 1;
+
+    vk::PipelineStageFlags sourceStage;
+    vk::PipelineStageFlags destinationStage;
+
+    if (oldLayout == vk::ImageLayout::eUndefined &&
+        newLayout == vk::ImageLayout::eTransferDstOptimal) {
+        barrier.srcAccessMask = vk::AccessFlagBits::eNone;
+        barrier.dstAccessMask = vk::AccessFlagBits::eTransferWrite;
+
+        sourceStage = vk::PipelineStageFlagBits::eTopOfPipe;
+        destinationStage = vk::PipelineStageFlagBits::eTransfer;
+    } else if (oldLayout == vk::ImageLayout::eTransferDstOptimal &&
+               newLayout == vk::ImageLayout::eShaderReadOnlyOptimal) {
+        barrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
+        barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
+
+        sourceStage = vk::PipelineStageFlagBits::eTransfer;
+        destinationStage = vk::PipelineStageFlagBits::eFragmentShader;
+    } else {
+        throw std::invalid_argument("Unsupported layout transition!");
+    }
+
+    cmd.pipelineBarrier(sourceStage, destinationStage, vk::DependencyFlags{}, nullptr, nullptr,
+                        barrier);
+
+    cmd.end();
+
+    vk::SubmitInfo submitInfo{};
+    vk::CommandBuffer cmdBuf = *cmd;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &cmdBuf;
+
+    _core->GetGraphicsQueue().submit(submitInfo);
+    _core->GetDevice().waitIdle();
+}
+
+void VulkanRenderer::CopyBufferToImage(vk::Buffer buffer, vk::Image image, uint32_t width,
+                                       uint32_t height) {
+    vk::CommandBufferAllocateInfo allocInfo{};
+    allocInfo.level = vk::CommandBufferLevel::ePrimary;
+    allocInfo.commandPool = *_commandPool;
+    allocInfo.commandBufferCount = 1;
+
+    auto cmdBuffers = _core->GetRaiiDevice().allocateCommandBuffers(allocInfo);
+    auto& cmd = cmdBuffers[0];
+
+    vk::CommandBufferBeginInfo beginInfo{};
+    beginInfo.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+    cmd.begin(beginInfo);
+
+    vk::BufferImageCopy region{};
+    region.bufferOffset = 0;
+    region.bufferRowLength = 0;
+    region.bufferImageHeight = 0;
+    region.imageSubresource.aspectMask = vk::ImageAspectFlagBits::eColor;
+    region.imageSubresource.mipLevel = 0;
+    region.imageSubresource.baseArrayLayer = 0;
+    region.imageSubresource.layerCount = 1;
+    region.imageOffset = vk::Offset3D{0, 0, 0};
+    region.imageExtent = vk::Extent3D{width, height, 1};
+
+    cmd.copyBufferToImage(buffer, image, vk::ImageLayout::eTransferDstOptimal, region);
 
     cmd.end();
 

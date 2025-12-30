@@ -345,7 +345,7 @@ VulkanCore::VulkanCore(GLFWwindow* window) {
 
     // Specify device features to enable.
     vk::PhysicalDeviceFeatures deviceFeatures{};
-    // TODO: Enable features as needed here (e.g., samplerAnisotropy, geometryShader)
+    deviceFeatures.samplerAnisotropy = VK_TRUE; // Enable anisotropic filtering for textures
 
     // Get required device extensions.
     auto deviceExtensions = GetRequiredDeviceExtensions();

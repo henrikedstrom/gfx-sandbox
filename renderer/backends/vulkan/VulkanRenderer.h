@@ -121,6 +121,8 @@ class VulkanRenderer final : public IRenderer {
     // Model
     void CreateModelDescriptorSetLayout();
     void CreateModelPipelineLayout();
+    void CreateDefaultTextures();
+    void CreateModelSampler();
     void CreateVertexBuffer(const Model& model);
     void CreateIndexBuffer(const Model& model);
     void CreateMaterials(const Model& model);
@@ -135,6 +137,12 @@ class VulkanRenderer final : public IRenderer {
     vk::Format FindDepthFormat() const;
     void CopyBuffer(vk::Buffer srcBuffer, vk::Buffer dstBuffer, vk::DeviceSize size);
     vk::raii::DescriptorPool& GetOrCreateDescriptorPool();
+    void CreateImage(uint32_t width, uint32_t height, vk::Format format, vk::ImageTiling tiling,
+                     vk::ImageUsageFlags usage, vk::MemoryPropertyFlags properties,
+                     vk::raii::Image& image, vk::raii::DeviceMemory& imageMemory);
+    void TransitionImageLayout(vk::Image image, vk::Format format, vk::ImageLayout oldLayout,
+                               vk::ImageLayout newLayout);
+    void CopyBufferToImage(vk::Buffer buffer, vk::Image image, uint32_t width, uint32_t height);
 
     // -------------------------------------------------------------------------
     // Core Vulkan resources
@@ -201,6 +209,21 @@ class VulkanRenderer final : public IRenderer {
 
     std::vector<SubMesh> _subMeshes;
     std::vector<Material> _materials;
+
+    // Default textures for materials
+    vk::raii::Image _defaultSRGBTexture{nullptr};
+    vk::raii::DeviceMemory _defaultSRGBTextureMemory{nullptr};
+    vk::raii::ImageView _defaultSRGBTextureView{nullptr};
+
+    vk::raii::Image _defaultUNormTexture{nullptr};
+    vk::raii::DeviceMemory _defaultUNormTextureMemory{nullptr};
+    vk::raii::ImageView _defaultUNormTextureView{nullptr};
+
+    vk::raii::Image _defaultNormalTexture{nullptr};
+    vk::raii::DeviceMemory _defaultNormalTextureMemory{nullptr};
+    vk::raii::ImageView _defaultNormalTextureView{nullptr};
+
+    vk::raii::Sampler _modelTextureSampler{nullptr};
 
     // -------------------------------------------------------------------------
     // Synchronization primitives
