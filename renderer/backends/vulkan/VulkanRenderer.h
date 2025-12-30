@@ -78,16 +78,18 @@ class VulkanRenderer final : public IRenderer {
 
     // Global resources
     void CreateUniformBuffers();
-    void CreateDescriptorSetLayout();
+    void CreateGlobalDescriptorSetLayout();
     void CreateDescriptorPool();
     void CreateDescriptorSets();
-    void CreatePipelineLayout();
 
     // Environment
+    void CreateEnvironmentPipelineLayout();
     void CreateEnvironmentPipeline();
     void CreatePlaceholderCubemap();
 
     // Model
+    void CreateModelDescriptorSetLayout();
+    void CreateModelPipelineLayout();
     void CreateVertexBuffer(const Model& model);
     void CreateIndexBuffer(const Model& model);
     void CreateModelPipeline();
@@ -120,8 +122,8 @@ class VulkanRenderer final : public IRenderer {
     // -------------------------------------------------------------------------
     // Global data
 
-    vk::raii::PipelineLayout _pipelineLayout{nullptr};
     vk::raii::DescriptorSetLayout _globalDescriptorSetLayout{nullptr};
+    vk::raii::DescriptorSetLayout _modelDescriptorSetLayout{nullptr};
     vk::raii::DescriptorPool _descriptorPool{nullptr};
     std::vector<vk::raii::DescriptorSet> _globalDescriptorSets;
 
@@ -132,6 +134,7 @@ class VulkanRenderer final : public IRenderer {
     // -------------------------------------------------------------------------
     // Environment and IBL related data
 
+    vk::raii::PipelineLayout _environmentPipelineLayout{nullptr};
     vk::raii::Pipeline _environmentPipeline{nullptr};
 
     vk::raii::Image _placeholderCubemap{nullptr};
@@ -148,6 +151,7 @@ class VulkanRenderer final : public IRenderer {
     // -------------------------------------------------------------------------
     // Model related data
 
+    vk::raii::PipelineLayout _modelPipelineLayout{nullptr};
     vk::raii::Pipeline _modelPipeline{nullptr};
 
     vk::raii::Buffer _vertexBuffer{nullptr};

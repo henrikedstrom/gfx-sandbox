@@ -34,17 +34,30 @@ VulkanRenderer::VulkanRenderer(GLFWwindow* window) : _window(window) {
     _core = std::make_unique<VulkanCore>(window);
     _swapchain = std::make_unique<VulkanSwapchain>(*_core, window);
 
+    // Set up render pass
     CreateDepthResources();
     CreateRenderPass();
+
+    // Command allocation
     CreateCommandPool();
+
+    // Resources
     CreateUniformBuffers();
     CreatePlaceholderCubemap();
-    CreateDescriptorSetLayout();
+
+    // Descriptor setup
+    CreateGlobalDescriptorSetLayout();
+    CreateModelDescriptorSetLayout();
     CreateDescriptorPool();
     CreateDescriptorSets();
-    CreatePipelineLayout();
+
+    // Pipelines
+    CreateEnvironmentPipelineLayout();
+    CreateModelPipelineLayout();
     CreateEnvironmentPipeline();
     CreateModelPipeline();
+
+    // Frame resources
     CreateFramebuffers();
     CreateCommandBuffers();
     CreateSyncObjects();
@@ -115,7 +128,6 @@ void VulkanRenderer::Render(const glm::mat4& modelMatrix, const CameraUniformsIn
     // Reset the fence only when we're sure we'll submit work.
     device.resetFences(*_inFlightFences[_currentFrame]);
 
-
     //----------------------------------
     // Record command buffer.
 
@@ -159,13 +171,17 @@ void VulkanRenderer::Render(const glm::mat4& modelMatrix, const CameraUniformsIn
 
     // Bind pipeline and descriptor set, then draw fullscreen triangle (environment/skybox).
     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *_environmentPipeline);
-    cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *_pipelineLayout, 0,
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *_environmentPipelineLayout, 0,
                            *_globalDescriptorSets[_currentFrame], nullptr);
     cmd.draw(3, 1, 0, 0);
 
     // Draw model if one has been loaded.
     if (*_vertexBuffer && *_indexBuffer && !_subMeshes.empty()) {
         cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *_modelPipeline);
+
+        // Rebind descriptor sets with model pipeline layout
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *_modelPipelineLayout, 0,
+                               *_globalDescriptorSets[_currentFrame], nullptr);
 
         // Bind vertex and index buffers.
         vk::Buffer vertexBuffers[] = {*_vertexBuffer};
@@ -177,7 +193,7 @@ void VulkanRenderer::Render(const glm::mat4& modelMatrix, const CameraUniformsIn
         ModelUniforms modelUniforms{};
         modelUniforms.modelMatrix = modelMatrix;
         modelUniforms.normalMatrix = glm::transpose(glm::inverse(modelMatrix));
-        cmd.pushConstants<ModelUniforms>(*_pipelineLayout, vk::ShaderStageFlagBits::eVertex, 0,
+        cmd.pushConstants<ModelUniforms>(*_modelPipelineLayout, vk::ShaderStageFlagBits::eVertex, 0,
                                          modelUniforms);
 
         // Draw each submesh.
@@ -189,7 +205,6 @@ void VulkanRenderer::Render(const glm::mat4& modelMatrix, const CameraUniformsIn
     cmd.endRenderPass();
 
     cmd.end();
-
 
     //----------------------------------
     // Submit command buffer.
@@ -211,7 +226,6 @@ void VulkanRenderer::Render(const glm::mat4& modelMatrix, const CameraUniformsIn
 
     _core->GetGraphicsQueue().submit(submitInfo, *_inFlightFences[_currentFrame]);
 
-    
     //----------------------------------
     // Present.
 
@@ -484,13 +498,14 @@ void VulkanRenderer::CreateUniformBuffers() {
     VK_LOG_INFO("Uniform buffers created ({} frames).", vkbackend::kMaxFramesInFlight);
 }
 
-void VulkanRenderer::CreateDescriptorSetLayout() {
+void VulkanRenderer::CreateGlobalDescriptorSetLayout() {
     // Binding 0: GlobalUniforms uniform buffer.
     vk::DescriptorSetLayoutBinding uboLayoutBinding{};
     uboLayoutBinding.binding = 0;
     uboLayoutBinding.descriptorType = vk::DescriptorType::eUniformBuffer;
     uboLayoutBinding.descriptorCount = 1;
-    uboLayoutBinding.stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment;
+    uboLayoutBinding.stageFlags =
+        vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment;
     uboLayoutBinding.pImmutableSamplers = nullptr;
 
     // Binding 1: Environment cubemap sampler (placeholder for now).
@@ -509,7 +524,7 @@ void VulkanRenderer::CreateDescriptorSetLayout() {
 
     _globalDescriptorSetLayout = _core->GetRaiiDevice().createDescriptorSetLayout(layoutInfo);
 
-    VK_LOG_INFO("Descriptor set layout created.");
+    VK_LOG_INFO("Global descriptor set layout created.");
 }
 
 void VulkanRenderer::CreateDescriptorPool() {
@@ -537,7 +552,7 @@ void VulkanRenderer::CreateDescriptorPool() {
 void VulkanRenderer::CreateDescriptorSets() {
     // Create one descriptor set per frame in flight.
     std::vector<vk::DescriptorSetLayout> layouts(vkbackend::kMaxFramesInFlight,
-                                                  *_globalDescriptorSetLayout);
+                                                 *_globalDescriptorSetLayout);
 
     vk::DescriptorSetAllocateInfo allocInfo{};
     allocInfo.descriptorPool = *_descriptorPool;
@@ -582,27 +597,23 @@ void VulkanRenderer::CreateDescriptorSets() {
     VK_LOG_INFO("Descriptor sets created and updated.");
 }
 
-void VulkanRenderer::CreatePipelineLayout() {
-    // Pipeline layout with global descriptor set and push constants for model matrix.
-    vk::DescriptorSetLayout setLayouts[] = {*_globalDescriptorSetLayout};
+// -------------------------------------------------------------------------
+// Environment
 
-    // Push constant for model uniforms (model matrix + normal matrix).
-    vk::PushConstantRange pushConstantRange{};
-    pushConstantRange.stageFlags = vk::ShaderStageFlagBits::eVertex;
-    pushConstantRange.offset = 0;
-    pushConstantRange.size = sizeof(ModelUniforms);
+void VulkanRenderer::CreateEnvironmentPipelineLayout() {
+    // Environment pipeline layout: only global descriptor set (set 0), no push constants.
+    vk::DescriptorSetLayout setLayouts[] = {*_globalDescriptorSetLayout};
 
     vk::PipelineLayoutCreateInfo layoutInfo{};
     layoutInfo.setLayoutCount = 1;
     layoutInfo.pSetLayouts = setLayouts;
-    layoutInfo.pushConstantRangeCount = 1;
-    layoutInfo.pPushConstantRanges = &pushConstantRange;
+    layoutInfo.pushConstantRangeCount = 0;
+    layoutInfo.pPushConstantRanges = nullptr;
 
-    _pipelineLayout = _core->GetRaiiDevice().createPipelineLayout(layoutInfo);
+    _environmentPipelineLayout = _core->GetRaiiDevice().createPipelineLayout(layoutInfo);
+
+    VK_LOG_INFO("Environment pipeline layout created.");
 }
-
-// -------------------------------------------------------------------------
-// Environment
 
 void VulkanRenderer::CreateEnvironmentPipeline() {
     const auto& device = _core->GetRaiiDevice();
@@ -692,7 +703,7 @@ void VulkanRenderer::CreateEnvironmentPipeline() {
     pipelineInfo.pDepthStencilState = &depthStencil;
     pipelineInfo.pColorBlendState = &colorBlending;
     pipelineInfo.pDynamicState = &dynamicState;
-    pipelineInfo.layout = *_pipelineLayout;
+    pipelineInfo.layout = *_environmentPipelineLayout;
     pipelineInfo.renderPass = *_renderPass;
     pipelineInfo.subpass = 0;
 
@@ -728,8 +739,8 @@ void VulkanRenderer::CreatePlaceholderCubemap() {
 
     vk::MemoryAllocateInfo allocInfo{};
     allocInfo.allocationSize = memRequirements.size;
-    allocInfo.memoryTypeIndex =
-        _core->FindMemoryType(memRequirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal);
+    allocInfo.memoryTypeIndex = _core->FindMemoryType(memRequirements.memoryTypeBits,
+                                                      vk::MemoryPropertyFlagBits::eDeviceLocal);
 
     _placeholderCubemapMemory = device.allocateMemory(allocInfo);
     _placeholderCubemap.bindMemory(*_placeholderCubemapMemory, 0);
@@ -797,8 +808,8 @@ void VulkanRenderer::CreatePlaceholderCubemap() {
     toTransferBarrier.srcAccessMask = vk::AccessFlagBits::eNone;
     toTransferBarrier.dstAccessMask = vk::AccessFlagBits::eTransferWrite;
 
-    cmd.pipelineBarrier(vk::PipelineStageFlagBits::eTopOfPipe,
-                        vk::PipelineStageFlagBits::eTransfer, {}, nullptr, nullptr, toTransferBarrier);
+    cmd.pipelineBarrier(vk::PipelineStageFlagBits::eTopOfPipe, vk::PipelineStageFlagBits::eTransfer,
+                        {}, nullptr, nullptr, toTransferBarrier);
 
     // Clear to white.
     vk::ClearColorValue clearColor{std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f}};
@@ -836,6 +847,46 @@ void VulkanRenderer::CreatePlaceholderCubemap() {
 // -------------------------------------------------------------------------
 // Model
 
+
+void VulkanRenderer::CreateModelDescriptorSetLayout() {
+    // For now, create an empty layout - will be populated when adding materials/textures.
+    // This will eventually contain:
+    // - Binding 0: ModelUniforms (will move from push constants)
+    // - Binding 1: MaterialUniforms
+    // - Binding 2: Sampler
+    // - Bindings 3-7: Textures (baseColor, metallicRoughness, normal, occlusion, emissive)
+
+    vk::DescriptorSetLayoutCreateInfo layoutInfo{};
+    layoutInfo.bindingCount = 0;
+    layoutInfo.pBindings = nullptr;
+
+    _modelDescriptorSetLayout = _core->GetRaiiDevice().createDescriptorSetLayout(layoutInfo);
+
+    VK_LOG_INFO("Model descriptor set layout created (empty placeholder).");
+}
+
+void VulkanRenderer::CreateModelPipelineLayout() {
+    // Model pipeline layout: global (set 0) + model (set 1) descriptor sets, with push constants.
+    vk::DescriptorSetLayout setLayouts[] = {*_globalDescriptorSetLayout,
+                                            *_modelDescriptorSetLayout};
+
+    // Push constant for model uniforms (model matrix + normal matrix).
+    vk::PushConstantRange pushConstantRange{};
+    pushConstantRange.stageFlags = vk::ShaderStageFlagBits::eVertex;
+    pushConstantRange.offset = 0;
+    pushConstantRange.size = sizeof(ModelUniforms);
+
+    vk::PipelineLayoutCreateInfo layoutInfo{};
+    layoutInfo.setLayoutCount = 2;
+    layoutInfo.pSetLayouts = setLayouts;
+    layoutInfo.pushConstantRangeCount = 1;
+    layoutInfo.pPushConstantRanges = &pushConstantRange;
+
+    _modelPipelineLayout = _core->GetRaiiDevice().createPipelineLayout(layoutInfo);
+
+    VK_LOG_INFO("Model pipeline layout created.");
+}
+
 void VulkanRenderer::CreateVertexBuffer(const Model& model) {
     const auto& vertices = model.GetVertices();
     if (vertices.empty()) {
@@ -859,9 +910,9 @@ void VulkanRenderer::CreateVertexBuffer(const Model& model) {
     stagingBufferMemory.unmapMemory();
 
     // Create device-local vertex buffer.
-    _core->CreateBuffer(bufferSize,
-                        vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eVertexBuffer,
-                        vk::MemoryPropertyFlagBits::eDeviceLocal, _vertexBuffer, _vertexBufferMemory);
+    _core->CreateBuffer(
+        bufferSize, vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eVertexBuffer,
+        vk::MemoryPropertyFlagBits::eDeviceLocal, _vertexBuffer, _vertexBufferMemory);
 
     // Copy from staging to device-local buffer.
     CopyBuffer(*stagingBuffer, *_vertexBuffer, bufferSize);
@@ -893,9 +944,9 @@ void VulkanRenderer::CreateIndexBuffer(const Model& model) {
     stagingBufferMemory.unmapMemory();
 
     // Create device-local index buffer.
-    _core->CreateBuffer(bufferSize,
-                        vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eIndexBuffer,
-                        vk::MemoryPropertyFlagBits::eDeviceLocal, _indexBuffer, _indexBufferMemory);
+    _core->CreateBuffer(
+        bufferSize, vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eIndexBuffer,
+        vk::MemoryPropertyFlagBits::eDeviceLocal, _indexBuffer, _indexBufferMemory);
 
     // Copy from staging to device-local buffer.
     CopyBuffer(*stagingBuffer, *_indexBuffer, bufferSize);
@@ -1040,7 +1091,7 @@ void VulkanRenderer::CreateModelPipeline() {
     pipelineInfo.pDepthStencilState = &depthStencil;
     pipelineInfo.pColorBlendState = &colorBlending;
     pipelineInfo.pDynamicState = &dynamicState;
-    pipelineInfo.layout = *_pipelineLayout;
+    pipelineInfo.layout = *_modelPipelineLayout;
     pipelineInfo.renderPass = *_renderPass;
     pipelineInfo.subpass = 0;
 
