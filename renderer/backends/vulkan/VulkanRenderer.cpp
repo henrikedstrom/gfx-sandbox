@@ -1632,8 +1632,8 @@ void VulkanRenderer::CreateModelPipeline() {
     const std::filesystem::path shaderPath{GFX_VULKAN_SHADER_PATH};
 
     // Load shader modules.
-    auto vertModule = vkshader::LoadShaderModule(device, shaderPath / "model.vert.spv");
-    auto fragModule = vkshader::LoadShaderModule(device, shaderPath / "model.frag.spv");
+    auto vertModule = vkshader::LoadShaderModule(device, shaderPath / "gltf_pbr.vert.spv");
+    auto fragModule = vkshader::LoadShaderModule(device, shaderPath / "gltf_pbr.frag.spv");
 
     if (!*vertModule || !*fragModule) {
         throw std::runtime_error("Failed to load model shader modules");

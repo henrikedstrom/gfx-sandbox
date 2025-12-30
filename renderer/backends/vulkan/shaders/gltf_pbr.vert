@@ -29,17 +29,23 @@ layout(push_constant) uniform PushConstants {
 // Outputs to fragment shader
 layout(location = 0) out vec3 outWorldPosition;
 layout(location = 1) out vec3 outNormal;
-layout(location = 2) out vec2 outTexCoord0;
-layout(location = 3) out vec4 outColor;
+layout(location = 2) out vec4 outTangent;
+layout(location = 3) out vec2 outTexCoord0;
+layout(location = 4) out vec2 outTexCoord1;
+layout(location = 5) out vec4 outColor;
 
 void main() {
     vec4 worldPos = model.modelMatrix * vec4(inPosition, 1.0);
     outWorldPosition = worldPos.xyz;
 
-    // Transform normal to world space (using normal matrix for non-uniform scaling)
+    // Transform normal to world space.
     outNormal = normalize(mat3(model.normalMatrix) * inNormal);
 
+    // Transform tangent to world space.
+    outTangent = vec4(normalize(mat3(model.modelMatrix) * inTangent.xyz), inTangent.w);
+
     outTexCoord0 = inTexCoord0;
+    outTexCoord1 = inTexCoord1;
     outColor = inColor;
 
     gl_Position = globals.projectionMatrix * globals.viewMatrix * worldPos;
