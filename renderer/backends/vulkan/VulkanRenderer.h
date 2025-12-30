@@ -56,11 +56,42 @@ class VulkanRenderer final : public IRenderer {
         alignas(16) glm::mat4 normalMatrix;
     };
 
+    struct MaterialUniforms {
+        alignas(16) glm::vec4 baseColorFactor;
+        alignas(16) glm::vec3 emissiveFactor;
+        alignas(4) float metallicFactor;
+        alignas(4) float roughnessFactor;
+        alignas(4) float normalScale;
+        alignas(4) float occlusionStrength;
+        alignas(4) float alphaCutoff; // Used for Mask mode
+        alignas(4) int alphaMode;     // 0 = Opaque, 1 = Mask, 2 = Blend
+    };
+
+    struct Material {
+        MaterialUniforms _uniforms;
+        vk::raii::Buffer _uniformBuffer{nullptr};
+        vk::raii::DeviceMemory _uniformBufferMemory{nullptr};
+        void* _uniformBufferMapped{nullptr};
+        vk::raii::DescriptorSet _descriptorSet{nullptr};
+        // TODO: Add textures later
+        // vk::raii::Image _baseColorTexture{nullptr};
+        // vk::raii::Image _metallicRoughnessTexture{nullptr};
+        // vk::raii::Image _normalTexture{nullptr};
+        // vk::raii::Image _occlusionTexture{nullptr};
+        // vk::raii::Image _emissiveTexture{nullptr};
+    };
+
     struct SubMesh {
         uint32_t _firstIndex{0};
         uint32_t _indexCount{0};
         int _materialIndex{-1};
         glm::vec3 _centroid{0.0f};
+    };
+
+    struct DescriptorPoolInfo {
+        vk::raii::DescriptorPool pool{nullptr};
+        uint32_t allocatedSets{0};
+        static constexpr uint32_t kMaxSetsPerPool = 512;
     };
 
     // -------------------------------------------------------------------------
@@ -85,13 +116,16 @@ class VulkanRenderer final : public IRenderer {
     // Environment
     void CreateEnvironmentPipelineLayout();
     void CreateEnvironmentPipeline();
-    void CreatePlaceholderCubemap();
+    void CreateDefaultCubemap();
 
     // Model
     void CreateModelDescriptorSetLayout();
     void CreateModelPipelineLayout();
     void CreateVertexBuffer(const Model& model);
     void CreateIndexBuffer(const Model& model);
+    void CreateMaterials(const Model& model);
+    void CreateDefaultMaterial();
+    void CreateMaterialDescriptorSets();
     void CreateModelPipeline();
 
     // Frame update
@@ -100,6 +134,7 @@ class VulkanRenderer final : public IRenderer {
     // Helpers
     vk::Format FindDepthFormat() const;
     void CopyBuffer(vk::Buffer srcBuffer, vk::Buffer dstBuffer, vk::DeviceSize size);
+    vk::raii::DescriptorPool& GetOrCreateDescriptorPool();
 
     // -------------------------------------------------------------------------
     // Core Vulkan resources
@@ -124,7 +159,7 @@ class VulkanRenderer final : public IRenderer {
 
     vk::raii::DescriptorSetLayout _globalDescriptorSetLayout{nullptr};
     vk::raii::DescriptorSetLayout _modelDescriptorSetLayout{nullptr};
-    vk::raii::DescriptorPool _descriptorPool{nullptr};
+    std::vector<DescriptorPoolInfo> _descriptorPools;
     std::vector<vk::raii::DescriptorSet> _globalDescriptorSets;
 
     std::vector<vk::raii::Buffer> _globalUniformBuffers;
@@ -137,9 +172,9 @@ class VulkanRenderer final : public IRenderer {
     vk::raii::PipelineLayout _environmentPipelineLayout{nullptr};
     vk::raii::Pipeline _environmentPipeline{nullptr};
 
-    vk::raii::Image _placeholderCubemap{nullptr};
-    vk::raii::DeviceMemory _placeholderCubemapMemory{nullptr};
-    vk::raii::ImageView _placeholderCubemapView{nullptr};
+    vk::raii::Image _defaultCubemap{nullptr};
+    vk::raii::DeviceMemory _defaultCubemapMemory{nullptr};
+    vk::raii::ImageView _defaultCubemapView{nullptr};
     vk::raii::Sampler _cubemapSampler{nullptr};
 
     // TODO: Add real environment cubemap and IBL textures
@@ -165,9 +200,7 @@ class VulkanRenderer final : public IRenderer {
     std::vector<void*> _modelUniformBuffersMapped;
 
     std::vector<SubMesh> _subMeshes;
-
-    // TODO: Add materials and textures
-    // std::vector<Material> _materials;
+    std::vector<Material> _materials;
 
     // -------------------------------------------------------------------------
     // Synchronization primitives

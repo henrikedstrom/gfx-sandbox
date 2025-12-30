@@ -43,7 +43,7 @@ VulkanRenderer::VulkanRenderer(GLFWwindow* window) : _window(window) {
 
     // Resources
     CreateUniformBuffers();
-    CreatePlaceholderCubemap();
+    CreateDefaultCubemap();
 
     // Descriptor setup
     CreateGlobalDescriptorSetLayout();
@@ -198,6 +198,11 @@ void VulkanRenderer::Render(const glm::mat4& modelMatrix, const CameraUniformsIn
 
         // Draw each submesh.
         for (const auto& submesh : _subMeshes) {
+            // Bind material descriptor set (set 1).
+            const Material& mat = _materials[submesh._materialIndex];
+            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *_modelPipelineLayout, 1,
+                                   *mat._descriptorSet, nullptr);
+
             cmd.drawIndexed(submesh._indexCount, 1, submesh._firstIndex, 0, 0);
         }
     }
@@ -225,7 +230,7 @@ void VulkanRenderer::Render(const glm::mat4& modelMatrix, const CameraUniformsIn
     submitInfo.pSignalSemaphores = signalSemaphores;
 
     _core->GetGraphicsQueue().submit(submitInfo, *_inFlightFences[_currentFrame]);
-
+    
     //----------------------------------
     // Present.
 
@@ -256,17 +261,45 @@ void VulkanRenderer::SetModel(const Model& model) {
     CreateVertexBuffer(model);
     CreateIndexBuffer(model);
 
-    // Store submesh information for drawing.
+    // Create materials with uniform buffers.
+    CreateMaterials(model);
+
+    // Define helper for checking invalid material indices.
+    const int modelMaterialCount = static_cast<int>(_materials.size());
+    auto hasInvalidMaterialIndex = [modelMaterialCount](const Model::SubMesh& submesh) {
+        return submesh._materialIndex < 0 || submesh._materialIndex >= modelMaterialCount;
+    };
+
+    // Determine if we need a default material.
+    bool needsDefaultMaterial = std::ranges::any_of(model.GetSubMeshes(), hasInvalidMaterialIndex);
+
+    // Create default material if needed (appends to _materials).
+    int defaultMaterialIndex = -1;
+    if (needsDefaultMaterial) {
+        CreateDefaultMaterial();
+        defaultMaterialIndex = static_cast<int>(_materials.size()) - 1;
+        VK_LOG_WARNING("Model has invalid material indices, using default material at index {}.",
+                       defaultMaterialIndex);
+    }
+
+    // Create descriptor sets for all materials.
+    CreateMaterialDescriptorSets();
+
+    // Store submesh information for rendering.
     _subMeshes.clear();
     for (const auto& srcMesh : model.GetSubMeshes()) {
+        int materialIndex =
+            hasInvalidMaterialIndex(srcMesh) ? defaultMaterialIndex : srcMesh._materialIndex;
+
         SubMesh dstMesh = {._firstIndex = srcMesh._firstIndex,
                            ._indexCount = srcMesh._indexCount,
-                           ._materialIndex = srcMesh._materialIndex,
+                           ._materialIndex = materialIndex,
                            ._centroid = (srcMesh._minBounds + srcMesh._maxBounds) * 0.5f};
         _subMeshes.push_back(dstMesh);
     }
 
-    VK_LOG_INFO("Model set: {} submeshes, {} total indices.", _subMeshes.size(), _indexCount);
+    VK_LOG_INFO("Model set: {} submeshes, {} materials, {} total indices.", _subMeshes.size(),
+                _materials.size(), _indexCount);
 }
 
 void VulkanRenderer::SetEnvironment([[maybe_unused]] const Environment& environment) {
@@ -528,38 +561,83 @@ void VulkanRenderer::CreateGlobalDescriptorSetLayout() {
 }
 
 void VulkanRenderer::CreateDescriptorPool() {
+    // Create initial descriptor pool (more will be created automatically as needed).
+    _descriptorPools.emplace_back();
+    auto& poolInfo = _descriptorPools.back();
+
     std::array<vk::DescriptorPoolSize, 2> poolSizes{};
 
-    // Uniform buffers
+    // Uniform buffers (global + per-material).
     poolSizes[0].type = vk::DescriptorType::eUniformBuffer;
-    poolSizes[0].descriptorCount = vkbackend::kMaxFramesInFlight;
+    poolSizes[0].descriptorCount = DescriptorPoolInfo::kMaxSetsPerPool;
 
-    // Combined image samplers (for environment map)
+    // Combined image samplers (environment + material textures).
     poolSizes[1].type = vk::DescriptorType::eCombinedImageSampler;
-    poolSizes[1].descriptorCount = vkbackend::kMaxFramesInFlight;
+    poolSizes[1].descriptorCount = DescriptorPoolInfo::kMaxSetsPerPool * 5;
 
-    vk::DescriptorPoolCreateInfo poolInfo{};
-    poolInfo.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
-    poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
-    poolInfo.pPoolSizes = poolSizes.data();
-    poolInfo.maxSets = vkbackend::kMaxFramesInFlight;
+    vk::DescriptorPoolCreateInfo createInfo{};
+    createInfo.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
+    createInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
+    createInfo.pPoolSizes = poolSizes.data();
+    createInfo.maxSets = DescriptorPoolInfo::kMaxSetsPerPool;
 
-    _descriptorPool = _core->GetRaiiDevice().createDescriptorPool(poolInfo);
+    poolInfo.pool = _core->GetRaiiDevice().createDescriptorPool(createInfo);
+    poolInfo.allocatedSets = 0;
 
-    VK_LOG_INFO("Descriptor pool created.");
+    VK_LOG_INFO("Descriptor pool #1 created (capacity: {} sets).", DescriptorPoolInfo::kMaxSetsPerPool);
+}
+
+vk::raii::DescriptorPool& VulkanRenderer::GetOrCreateDescriptorPool() {
+    // Find a pool with available capacity.
+    for (auto& poolInfo : _descriptorPools) {
+        if (poolInfo.allocatedSets < DescriptorPoolInfo::kMaxSetsPerPool) {
+            poolInfo.allocatedSets++;
+            return poolInfo.pool;
+        }
+    }
+
+    // All pools are full, create a new one.
+    _descriptorPools.emplace_back();
+    auto& newPoolInfo = _descriptorPools.back();
+
+    std::array<vk::DescriptorPoolSize, 2> poolSizes{};
+
+    poolSizes[0].type = vk::DescriptorType::eUniformBuffer;
+    poolSizes[0].descriptorCount = DescriptorPoolInfo::kMaxSetsPerPool;
+
+    poolSizes[1].type = vk::DescriptorType::eCombinedImageSampler;
+    poolSizes[1].descriptorCount = DescriptorPoolInfo::kMaxSetsPerPool * 5;
+
+    vk::DescriptorPoolCreateInfo createInfo{};
+    createInfo.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
+    createInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
+    createInfo.pPoolSizes = poolSizes.data();
+    createInfo.maxSets = DescriptorPoolInfo::kMaxSetsPerPool;
+
+    newPoolInfo.pool = _core->GetRaiiDevice().createDescriptorPool(createInfo);
+    newPoolInfo.allocatedSets = 1;
+
+    VK_LOG_INFO("Descriptor pool #{} created (capacity: {} sets).", _descriptorPools.size(),
+                DescriptorPoolInfo::kMaxSetsPerPool);
+
+    return newPoolInfo.pool;
 }
 
 void VulkanRenderer::CreateDescriptorSets() {
-    // Create one descriptor set per frame in flight.
-    std::vector<vk::DescriptorSetLayout> layouts(vkbackend::kMaxFramesInFlight,
-                                                 *_globalDescriptorSetLayout);
+    // Create one descriptor set per frame in flight from the pool chain.
+    _globalDescriptorSets.clear();
+
+    for (uint32_t i = 0; i < vkbackend::kMaxFramesInFlight; ++i) {
+        vk::DescriptorSetLayout layout = *_globalDescriptorSetLayout;
 
     vk::DescriptorSetAllocateInfo allocInfo{};
-    allocInfo.descriptorPool = *_descriptorPool;
-    allocInfo.descriptorSetCount = vkbackend::kMaxFramesInFlight;
-    allocInfo.pSetLayouts = layouts.data();
+        allocInfo.descriptorPool = *GetOrCreateDescriptorPool();
+        allocInfo.descriptorSetCount = 1;
+        allocInfo.pSetLayouts = &layout;
 
-    _globalDescriptorSets = _core->GetRaiiDevice().allocateDescriptorSets(allocInfo);
+        auto sets = _core->GetRaiiDevice().allocateDescriptorSets(allocInfo);
+        _globalDescriptorSets.push_back(std::move(sets[0]));
+    }
 
     // Update each descriptor set to point to its uniform buffer and cubemap.
     for (uint32_t i = 0; i < vkbackend::kMaxFramesInFlight; ++i) {
@@ -572,7 +650,7 @@ void VulkanRenderer::CreateDescriptorSets() {
         // Binding 1: Cubemap sampler.
         vk::DescriptorImageInfo imageInfo{};
         imageInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
-        imageInfo.imageView = *_placeholderCubemapView;
+        imageInfo.imageView = *_defaultCubemapView;
         imageInfo.sampler = *_cubemapSampler;
 
         std::array<vk::WriteDescriptorSet, 2> descriptorWrites{};
@@ -712,7 +790,7 @@ void VulkanRenderer::CreateEnvironmentPipeline() {
     VK_LOG_INFO("Environment pipeline created.");
 }
 
-void VulkanRenderer::CreatePlaceholderCubemap() {
+void VulkanRenderer::CreateDefaultCubemap() {
     const auto& device = _core->GetRaiiDevice();
     const uint32_t size = 1; // 1x1 per face
 
@@ -732,22 +810,22 @@ void VulkanRenderer::CreatePlaceholderCubemap() {
     imageInfo.samples = vk::SampleCountFlagBits::e1;
     imageInfo.flags = vk::ImageCreateFlagBits::eCubeCompatible;
 
-    _placeholderCubemap = device.createImage(imageInfo);
+    _defaultCubemap = device.createImage(imageInfo);
 
     // Allocate memory.
-    vk::MemoryRequirements memRequirements = _placeholderCubemap.getMemoryRequirements();
+    vk::MemoryRequirements memRequirements = _defaultCubemap.getMemoryRequirements();
 
     vk::MemoryAllocateInfo allocInfo{};
     allocInfo.allocationSize = memRequirements.size;
     allocInfo.memoryTypeIndex = _core->FindMemoryType(memRequirements.memoryTypeBits,
                                                       vk::MemoryPropertyFlagBits::eDeviceLocal);
 
-    _placeholderCubemapMemory = device.allocateMemory(allocInfo);
-    _placeholderCubemap.bindMemory(*_placeholderCubemapMemory, 0);
+    _defaultCubemapMemory = device.allocateMemory(allocInfo);
+    _defaultCubemap.bindMemory(*_defaultCubemapMemory, 0);
 
     // Create image view.
     vk::ImageViewCreateInfo viewInfo{};
-    viewInfo.image = *_placeholderCubemap;
+    viewInfo.image = *_defaultCubemap;
     viewInfo.viewType = vk::ImageViewType::eCube;
     viewInfo.format = vk::Format::eR8G8B8A8Unorm;
     viewInfo.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
@@ -756,7 +834,7 @@ void VulkanRenderer::CreatePlaceholderCubemap() {
     viewInfo.subresourceRange.baseArrayLayer = 0;
     viewInfo.subresourceRange.layerCount = 6;
 
-    _placeholderCubemapView = device.createImageView(viewInfo);
+    _defaultCubemapView = device.createImageView(viewInfo);
 
     // Create sampler.
     vk::SamplerCreateInfo samplerInfo{};
@@ -803,7 +881,7 @@ void VulkanRenderer::CreatePlaceholderCubemap() {
     toTransferBarrier.newLayout = vk::ImageLayout::eTransferDstOptimal;
     toTransferBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     toTransferBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    toTransferBarrier.image = *_placeholderCubemap;
+    toTransferBarrier.image = *_defaultCubemap;
     toTransferBarrier.subresourceRange = subresourceRange;
     toTransferBarrier.srcAccessMask = vk::AccessFlagBits::eNone;
     toTransferBarrier.dstAccessMask = vk::AccessFlagBits::eTransferWrite;
@@ -813,7 +891,7 @@ void VulkanRenderer::CreatePlaceholderCubemap() {
 
     // Clear to white.
     vk::ClearColorValue clearColor{std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f}};
-    cmd.clearColorImage(*_placeholderCubemap, vk::ImageLayout::eTransferDstOptimal, clearColor,
+    cmd.clearColorImage(*_defaultCubemap, vk::ImageLayout::eTransferDstOptimal, clearColor,
                         subresourceRange);
 
     // Transition to shader read.
@@ -822,7 +900,7 @@ void VulkanRenderer::CreatePlaceholderCubemap() {
     toShaderBarrier.newLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
     toShaderBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     toShaderBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    toShaderBarrier.image = *_placeholderCubemap;
+    toShaderBarrier.image = *_defaultCubemap;
     toShaderBarrier.subresourceRange = subresourceRange;
     toShaderBarrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
     toShaderBarrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
@@ -841,7 +919,7 @@ void VulkanRenderer::CreatePlaceholderCubemap() {
     _core->GetGraphicsQueue().submit(submitInfo);
     _core->GetDevice().waitIdle();
 
-    VK_LOG_INFO("Placeholder cubemap created ({}x{} per face).", size, size);
+    VK_LOG_INFO("Default cubemap created ({}x{} per face).", size, size);
 }
 
 // -------------------------------------------------------------------------
@@ -849,20 +927,29 @@ void VulkanRenderer::CreatePlaceholderCubemap() {
 
 
 void VulkanRenderer::CreateModelDescriptorSetLayout() {
-    // For now, create an empty layout - will be populated when adding materials/textures.
-    // This will eventually contain:
-    // - Binding 0: ModelUniforms (will move from push constants)
-    // - Binding 1: MaterialUniforms
-    // - Binding 2: Sampler
-    // - Bindings 3-7: Textures (baseColor, metallicRoughness, normal, occlusion, emissive)
+    // Model descriptor set layout (set 1) contains:
+    // - Binding 0: MaterialUniforms
+    // Will eventually also contain:
+    // - Binding 1: Sampler
+    // - Bindings 2-6: Textures (baseColor, metallicRoughness, normal, occlusion, emissive)
+
+    // Binding 0: MaterialUniforms uniform buffer.
+    vk::DescriptorSetLayoutBinding materialUboLayoutBinding{};
+    materialUboLayoutBinding.binding = 0;
+    materialUboLayoutBinding.descriptorType = vk::DescriptorType::eUniformBuffer;
+    materialUboLayoutBinding.descriptorCount = 1;
+    materialUboLayoutBinding.stageFlags = vk::ShaderStageFlagBits::eFragment;
+    materialUboLayoutBinding.pImmutableSamplers = nullptr;
+
+    std::array bindings = {materialUboLayoutBinding};
 
     vk::DescriptorSetLayoutCreateInfo layoutInfo{};
-    layoutInfo.bindingCount = 0;
-    layoutInfo.pBindings = nullptr;
+    layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
+    layoutInfo.pBindings = bindings.data();
 
     _modelDescriptorSetLayout = _core->GetRaiiDevice().createDescriptorSetLayout(layoutInfo);
 
-    VK_LOG_INFO("Model descriptor set layout created (empty placeholder).");
+    VK_LOG_INFO("Model descriptor set layout created with material uniforms.");
 }
 
 void VulkanRenderer::CreateModelPipelineLayout() {
@@ -952,6 +1039,158 @@ void VulkanRenderer::CreateIndexBuffer(const Model& model) {
     CopyBuffer(*stagingBuffer, *_indexBuffer, bufferSize);
 
     VK_LOG_INFO("Created index buffer with {} indices ({} bytes).", indices.size(), bufferSize);
+}
+
+void VulkanRenderer::CreateMaterials(const Model& model) {
+    const auto& device = _core->GetRaiiDevice();
+
+    _materials.clear();
+
+    if (model.GetMaterials().empty()) {
+        VK_LOG_INFO("No materials in model.");
+        return;
+    }
+
+    _materials.resize(model.GetMaterials().size());
+
+    for (size_t i = 0; i < model.GetMaterials().size(); ++i) {
+        const Model::Material& srcMat = model.GetMaterials()[i];
+        Material& dstMat = _materials[i];
+
+        // Initialize material uniforms from model data.
+        dstMat._uniforms.baseColorFactor = srcMat._baseColorFactor;
+        dstMat._uniforms.emissiveFactor = srcMat._emissiveFactor;
+        dstMat._uniforms.metallicFactor = srcMat._metallicFactor;
+        dstMat._uniforms.roughnessFactor = srcMat._roughnessFactor;
+        dstMat._uniforms.normalScale = srcMat._normalScale;
+        dstMat._uniforms.occlusionStrength = srcMat._occlusionStrength;
+        dstMat._uniforms.alphaCutoff = srcMat._alphaCutoff;
+        dstMat._uniforms.alphaMode = static_cast<int>(srcMat._alphaMode);
+
+        // Create uniform buffer for this material.
+        const vk::DeviceSize bufferSize = sizeof(MaterialUniforms);
+
+        vk::BufferCreateInfo bufferInfo{};
+        bufferInfo.size = bufferSize;
+        bufferInfo.usage = vk::BufferUsageFlagBits::eUniformBuffer;
+        bufferInfo.sharingMode = vk::SharingMode::eExclusive;
+
+        dstMat._uniformBuffer = device.createBuffer(bufferInfo);
+
+        // Allocate memory for the buffer.
+        vk::MemoryRequirements memRequirements = dstMat._uniformBuffer.getMemoryRequirements();
+
+        vk::MemoryAllocateInfo allocInfo{};
+        allocInfo.allocationSize = memRequirements.size;
+        allocInfo.memoryTypeIndex = _core->FindMemoryType(
+            memRequirements.memoryTypeBits,
+            vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+
+        dstMat._uniformBufferMemory = device.allocateMemory(allocInfo);
+        dstMat._uniformBuffer.bindMemory(*dstMat._uniformBufferMemory, 0);
+
+        // Map the buffer memory persistently.
+        dstMat._uniformBufferMapped = dstMat._uniformBufferMemory.mapMemory(0, bufferSize);
+
+        // Copy initial data to the buffer.
+        std::memcpy(dstMat._uniformBufferMapped, &dstMat._uniforms, bufferSize);
+
+        VK_LOG_INFO("Created material {} uniform buffer ({} bytes).", i, bufferSize);
+    }
+
+    VK_LOG_INFO("Created {} materials.", _materials.size());
+}
+
+void VulkanRenderer::CreateDefaultMaterial() {
+    const auto& device = _core->GetRaiiDevice();
+
+    // Append a default material to the materials vector.
+    Material defaultMat;
+
+    // Initialize with sensible defaults (gray, non-metallic, medium roughness).
+    defaultMat._uniforms.baseColorFactor = glm::vec4(0.8f, 0.8f, 0.8f, 1.0f);
+    defaultMat._uniforms.emissiveFactor = glm::vec3(0.0f);
+    defaultMat._uniforms.metallicFactor = 0.0f;
+    defaultMat._uniforms.roughnessFactor = 0.5f;
+    defaultMat._uniforms.normalScale = 1.0f;
+    defaultMat._uniforms.occlusionStrength = 1.0f;
+    defaultMat._uniforms.alphaCutoff = 0.5f;
+    defaultMat._uniforms.alphaMode = 0; // Opaque
+
+    // Create uniform buffer for default material.
+    const vk::DeviceSize bufferSize = sizeof(MaterialUniforms);
+
+    vk::BufferCreateInfo bufferInfo{};
+    bufferInfo.size = bufferSize;
+    bufferInfo.usage = vk::BufferUsageFlagBits::eUniformBuffer;
+    bufferInfo.sharingMode = vk::SharingMode::eExclusive;
+
+    defaultMat._uniformBuffer = device.createBuffer(bufferInfo);
+
+    // Allocate memory for the buffer.
+    vk::MemoryRequirements memRequirements = defaultMat._uniformBuffer.getMemoryRequirements();
+
+    vk::MemoryAllocateInfo allocInfo{};
+    allocInfo.allocationSize = memRequirements.size;
+    allocInfo.memoryTypeIndex = _core->FindMemoryType(
+        memRequirements.memoryTypeBits,
+        vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+
+    defaultMat._uniformBufferMemory = device.allocateMemory(allocInfo);
+    defaultMat._uniformBuffer.bindMemory(*defaultMat._uniformBufferMemory, 0);
+
+    // Map the buffer memory persistently.
+    defaultMat._uniformBufferMapped = defaultMat._uniformBufferMemory.mapMemory(0, bufferSize);
+
+    // Copy initial data to the buffer.
+    std::memcpy(defaultMat._uniformBufferMapped, &defaultMat._uniforms, bufferSize);
+
+    _materials.push_back(std::move(defaultMat));
+
+    VK_LOG_INFO("Created default material at index {}.", _materials.size() - 1);
+}
+
+void VulkanRenderer::CreateMaterialDescriptorSets() {
+    const auto& device = _core->GetRaiiDevice();
+
+    if (_materials.empty()) {
+        VK_LOG_INFO("No materials to create descriptor sets for.");
+        return;
+    }
+
+    // Allocate descriptor sets for all materials from the pool chain.
+    // Pools are automatically created as needed.
+    for (size_t i = 0; i < _materials.size(); ++i) {
+        Material& mat = _materials[i];
+
+        vk::DescriptorSetLayout layout = *_modelDescriptorSetLayout;
+
+        vk::DescriptorSetAllocateInfo allocInfo{};
+        allocInfo.descriptorPool = *GetOrCreateDescriptorPool();
+        allocInfo.descriptorSetCount = 1;
+        allocInfo.pSetLayouts = &layout;
+
+        auto sets = device.allocateDescriptorSets(allocInfo);
+        mat._descriptorSet = std::move(sets[0]);
+
+        // Binding 0: Material uniform buffer.
+        vk::DescriptorBufferInfo bufferInfo{};
+        bufferInfo.buffer = *mat._uniformBuffer;
+        bufferInfo.offset = 0;
+        bufferInfo.range = sizeof(MaterialUniforms);
+
+        vk::WriteDescriptorSet descriptorWrite{};
+        descriptorWrite.dstSet = *mat._descriptorSet;
+        descriptorWrite.dstBinding = 0;
+        descriptorWrite.dstArrayElement = 0;
+        descriptorWrite.descriptorType = vk::DescriptorType::eUniformBuffer;
+        descriptorWrite.descriptorCount = 1;
+        descriptorWrite.pBufferInfo = &bufferInfo;
+
+        _core->GetDevice().updateDescriptorSets(descriptorWrite, nullptr);
+    }
+
+    VK_LOG_INFO("Created {} material descriptor sets.", _materials.size());
 }
 
 void VulkanRenderer::CreateModelPipeline() {

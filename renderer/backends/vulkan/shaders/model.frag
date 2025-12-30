@@ -18,6 +18,18 @@ layout(set = 0, binding = 0) uniform GlobalUniforms {
     vec3 cameraPosition;
 } globals;
 
+// Material uniforms
+layout(set = 1, binding = 0) uniform MaterialUniforms {
+    vec4 baseColorFactor;
+    vec3 emissiveFactor;
+    float metallicFactor;
+    float roughnessFactor;
+    float normalScale;
+    float occlusionStrength;
+    float alphaCutoff;
+    int alphaMode;
+} material;
+
 // Output
 layout(location = 0) out vec4 outColor;
 
@@ -31,17 +43,21 @@ void main() {
 
     // Basic diffuse lighting
     float NdotL = max(dot(N, lightDir), 0.0);
-    float ambient = 0.2;
-    float diffuse = NdotL * 0.8;
+    float ambient = 0.1;
+    float diffuse = NdotL * 0.4;
 
-    // Base color from vertex color (will add textures later)
-    vec3 baseColor = 0.35 * inColor.rgb;
+    // Base color from material factor * vertex color (will multiply by texture later)
+    vec3 baseColor = material.baseColorFactor.rgb * inColor.rgb;
+    float alpha = material.baseColorFactor.a * inColor.a;
 
     vec3 finalColor = baseColor * (ambient + diffuse);
+
+    // Add emissive contribution
+    //finalColor += material.emissiveFactor;
 
     // Gamma correction
     finalColor = pow(finalColor, vec3(1.0 / 2.2));
 
-    outColor = vec4(finalColor, inColor.a);
+    outColor = vec4(finalColor, alpha);
 }
 
