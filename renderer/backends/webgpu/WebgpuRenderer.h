@@ -94,6 +94,7 @@ class WebgpuRenderer final : public IRenderer {
         wgpu::Texture _occlusionTexture;
         wgpu::Texture _emissiveTexture;
         wgpu::BindGroup _bindGroup;
+        bool _doubleSided{false};
     };
 
     struct SubMesh {
@@ -142,7 +143,8 @@ class WebgpuRenderer final : public IRenderer {
     // Model related data. TODO: Move to separate class
     wgpu::ShaderModule _modelShaderModule;
     wgpu::BindGroupLayout _modelBindGroupLayout;
-    wgpu::RenderPipeline _modelPipelineOpaque;
+    wgpu::RenderPipeline _modelPipelineOpaqueSingleSided;
+    wgpu::RenderPipeline _modelPipelineOpaqueDoubleSided;
     wgpu::RenderPipeline _modelPipelineTransparent;
     wgpu::Buffer _vertexBuffer;
     wgpu::Buffer _indexBuffer;
@@ -160,7 +162,8 @@ class WebgpuRenderer final : public IRenderer {
     wgpu::TextureView _defaultCubeTextureView;
 
     // Meshes and materials
-    std::vector<SubMesh> _opaqueMeshes;
+    std::vector<SubMesh> _opaqueMeshesSingleSided;
+    std::vector<SubMesh> _opaqueMeshesDoubleSided;
     std::vector<SubMesh> _transparentMeshes;
     std::vector<Material> _materials;
 

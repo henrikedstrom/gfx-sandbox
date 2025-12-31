@@ -326,13 +326,15 @@ WebgpuRenderer::~WebgpuRenderer() {
 
     // Clear collections first (these hold GPU resources).
     _materials.clear();
-    _opaqueMeshes.clear();
+    _opaqueMeshesSingleSided.clear();
+    _opaqueMeshesDoubleSided.clear();
     _transparentMeshes.clear();
     _transparentMeshesDepthSorted.clear();
 
     // Release GPU resources in reverse dependency order.
     // Pipelines and shader modules.
-    _modelPipelineOpaque = nullptr;
+    _modelPipelineOpaqueSingleSided = nullptr;
+    _modelPipelineOpaqueDoubleSided = nullptr;
     _modelPipelineTransparent = nullptr;
     _modelShaderModule = nullptr;
     _environmentPipeline = nullptr;
@@ -419,12 +421,21 @@ void WebgpuRenderer::Render(const glm::mat4& modelMatrix, const CameraUniformsIn
         pass.SetVertexBuffer(0, _vertexBuffer);
         pass.SetIndexBuffer(_indexBuffer, wgpu::IndexFormat::Uint32);
 
-        pass.SetPipeline(_modelPipelineOpaque);
-        for (const auto& subMesh : _opaqueMeshes) {
+        // Draw opaque single-sided meshes.
+        pass.SetPipeline(_modelPipelineOpaqueSingleSided);
+        for (const auto& subMesh : _opaqueMeshesSingleSided) {
             pass.SetBindGroup(1, _materials[subMesh._materialIndex]._bindGroup);
             pass.DrawIndexed(subMesh._indexCount, 1u, subMesh._firstIndex);
         }
 
+        // Draw opaque double-sided meshes.
+        pass.SetPipeline(_modelPipelineOpaqueDoubleSided);
+        for (const auto& subMesh : _opaqueMeshesDoubleSided) {
+            pass.SetBindGroup(1, _materials[subMesh._materialIndex]._bindGroup);
+            pass.DrawIndexed(subMesh._indexCount, 1u, subMesh._firstIndex);
+        }
+
+        // Draw transparent meshes (sorted back-to-front).
         pass.SetPipeline(_modelPipelineTransparent);
         for (const auto& depthInfo : _transparentMeshesDepthSorted) {
             const SubMesh& subMesh = _transparentMeshes[depthInfo._meshIndex];
@@ -447,7 +458,8 @@ void WebgpuRenderer::Render(const glm::mat4& modelMatrix, const CameraUniformsIn
 void WebgpuRenderer::ReloadShaders() {
     _environmentPipeline = nullptr;
     _environmentShaderModule = nullptr;
-    _modelPipelineOpaque = nullptr;
+    _modelPipelineOpaqueSingleSided = nullptr;
+    _modelPipelineOpaqueDoubleSided = nullptr;
     _modelPipelineTransparent = nullptr;
     _modelShaderModule = nullptr;
 
@@ -483,10 +495,11 @@ void WebgpuRenderer::SetModel(const Model& model) {
                          defaultMaterialIndex);
     }
 
-    // Store submesh information, remapping invalid material indices and sorting by alpha mode.
-    _opaqueMeshes.clear();
+    // Store submesh information, sorting by alpha mode and doubleSided into 3 lists.
+    _opaqueMeshesSingleSided.clear();
+    _opaqueMeshesDoubleSided.clear();
     _transparentMeshes.clear();
-    _opaqueMeshes.reserve(model.GetSubMeshes().size());
+    _opaqueMeshesSingleSided.reserve(model.GetSubMeshes().size());
 
     for (const auto& srcSubMesh : model.GetSubMeshes()) {
         int materialIndex =
@@ -497,11 +510,18 @@ void WebgpuRenderer::SetModel(const Model& model) {
                               ._materialIndex = materialIndex,
                               ._centroid = (srcSubMesh._minBounds + srcSubMesh._maxBounds) * 0.5f};
 
-        // Sort into opaque or transparent based on material alpha mode.
-        if (_materials[materialIndex]._uniforms.alphaMode == 2) { // 2 = Blend
+        const Material& material = _materials[materialIndex];
+
+        // Sort into 3 categories: opaque (single/double-sided) or transparent.
+        if (material._uniforms.alphaMode == 2) { // 2 = Blend
+            // Transparent materials always render double-sided.
             _transparentMeshes.push_back(dstSubMesh);
+        } else if (material._doubleSided) {
+            // Opaque double-sided.
+            _opaqueMeshesDoubleSided.push_back(dstSubMesh);
         } else {
-            _opaqueMeshes.push_back(dstSubMesh);
+            // Opaque single-sided.
+            _opaqueMeshesSingleSided.push_back(dstSubMesh);
         }
     }
 
@@ -944,6 +964,7 @@ void WebgpuRenderer::CreateMaterials(const Model& model) {
             dstMat._uniforms.occlusionStrength = srcMat._occlusionStrength;
             dstMat._uniforms.alphaCutoff = srcMat._alphaCutoff;
             dstMat._uniforms.alphaMode = int(srcMat._alphaMode);
+            dstMat._doubleSided = srcMat._doubleSided;
 
             _device.GetQueue().WriteBuffer(dstMat._uniformBuffer, 0, &dstMat._uniforms,
                                            sizeof(MaterialUniforms));
@@ -1214,9 +1235,15 @@ void WebgpuRenderer::CreateModelRenderPipelines() {
     descriptor.depthStencil = &depthStencilState;
     descriptor.fragment = &fragmentState;
 
-    _modelPipelineOpaque = _device.CreateRenderPipeline(&descriptor);
+    // Create opaque single-sided pipeline (cull back faces, depth writes enabled, no blending).
+    descriptor.primitive.cullMode = wgpu::CullMode::Back;
+    _modelPipelineOpaqueSingleSided = _device.CreateRenderPipeline(&descriptor);
 
-    // Set up pipeline for transparent objects
+    // Create opaque double-sided pipeline (no culling, depth writes enabled, no blending).
+    descriptor.primitive.cullMode = wgpu::CullMode::None;
+    _modelPipelineOpaqueDoubleSided = _device.CreateRenderPipeline(&descriptor);
+
+    // Create transparent pipeline (no culling, depth writes disabled, blending enabled).
     wgpu::BlendComponent blendComponent{};
     blendComponent.operation = wgpu::BlendOperation::Add;
     blendComponent.srcFactor = wgpu::BlendFactor::SrcAlpha;
@@ -1227,7 +1254,7 @@ void WebgpuRenderer::CreateModelRenderPipelines() {
     blendState.alpha = blendComponent;
 
     colorTargetState.blend = &blendState;
-    depthStencilState.depthWriteEnabled = false; // Disable depth writes for transparent objects
+    depthStencilState.depthWriteEnabled = false;
 
     _modelPipelineTransparent = _device.CreateRenderPipeline(&descriptor);
 }
@@ -1332,7 +1359,7 @@ void WebgpuRenderer::SortTransparentMeshes(const glm::mat4& modelMatrix,
         }
     }
 
-    std::sort(
-        _transparentMeshesDepthSorted.begin(), _transparentMeshesDepthSorted.end(),
+    std::ranges::sort(
+        _transparentMeshesDepthSorted,
         [](const SubMeshDepthInfo& a, const SubMeshDepthInfo& b) { return a._depth < b._depth; });
 }
