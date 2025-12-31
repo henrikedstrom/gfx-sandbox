@@ -3,6 +3,7 @@
 
 // Standard Library Headers
 #include <array>
+#include <bit>
 #include <cstring>
 #include <filesystem>
 #include <memory>
@@ -33,8 +34,8 @@ static bool s_registered = [] {
 namespace {
 
 /// @brief Creates a Vulkan image and allocates device memory for it.
-void CreateImage(VulkanCore& core, uint32_t width, uint32_t height, vk::Format format,
-                 vk::ImageTiling tiling, vk::ImageUsageFlags usage,
+void CreateImage(VulkanCore& core, uint32_t width, uint32_t height, uint32_t mipLevels,
+                 vk::Format format, vk::ImageTiling tiling, vk::ImageUsageFlags usage,
                  vk::MemoryPropertyFlags properties, vk::raii::Image& image,
                  vk::raii::DeviceMemory& imageMemory) {
     vk::ImageCreateInfo imageInfo{};
@@ -42,7 +43,7 @@ void CreateImage(VulkanCore& core, uint32_t width, uint32_t height, vk::Format f
     imageInfo.extent.width = width;
     imageInfo.extent.height = height;
     imageInfo.extent.depth = 1;
-    imageInfo.mipLevels = 1;
+    imageInfo.mipLevels = mipLevels;
     imageInfo.arrayLayers = 1;
     imageInfo.format = format;
     imageInfo.tiling = tiling;
@@ -66,7 +67,7 @@ void CreateImage(VulkanCore& core, uint32_t width, uint32_t height, vk::Format f
 /// @brief Transitions an image from one layout to another using a pipeline barrier.
 void TransitionImageLayout(VulkanCore& core, vk::raii::CommandPool& commandPool, vk::Image image,
                            [[maybe_unused]] vk::Format format, vk::ImageLayout oldLayout,
-                           vk::ImageLayout newLayout) {
+                           vk::ImageLayout newLayout, uint32_t mipLevels) {
     vk::CommandBufferAllocateInfo allocInfo{};
     allocInfo.level = vk::CommandBufferLevel::ePrimary;
     allocInfo.commandPool = *commandPool;
@@ -87,7 +88,7 @@ void TransitionImageLayout(VulkanCore& core, vk::raii::CommandPool& commandPool,
     barrier.image = image;
     barrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
     barrier.subresourceRange.baseMipLevel = 0;
-    barrier.subresourceRange.levelCount = 1;
+    barrier.subresourceRange.levelCount = mipLevels;
     barrier.subresourceRange.baseArrayLayer = 0;
     barrier.subresourceRange.layerCount = 1;
 
@@ -114,6 +115,104 @@ void TransitionImageLayout(VulkanCore& core, vk::raii::CommandPool& commandPool,
 
     cmd.pipelineBarrier(sourceStage, destinationStage, vk::DependencyFlags{}, nullptr, nullptr,
                         barrier);
+
+    cmd.end();
+
+    vk::SubmitInfo submitInfo{};
+    vk::CommandBuffer cmdBuf = *cmd;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &cmdBuf;
+
+    core.GetGraphicsQueue().submit(submitInfo);
+    core.GetDevice().waitIdle();
+}
+
+/// @brief Generates mipmaps for an image using vkCmdBlitImage.
+void GenerateMipmaps(VulkanCore& core, vk::raii::CommandPool& commandPool, vk::Image image,
+                     vk::Format format, uint32_t width, uint32_t height, uint32_t mipLevels) {
+    // Ensure texture format supports blit operations.
+    vk::FormatProperties formatProperties = core.GetPhysicalDevice().getFormatProperties(format);
+
+    if (!(formatProperties.optimalTilingFeatures & vk::FormatFeatureFlagBits::eBlitSrc) ||
+        !(formatProperties.optimalTilingFeatures & vk::FormatFeatureFlagBits::eBlitDst)) {
+        throw std::runtime_error("Texture format does not support blit source and destination.");
+    }
+
+    vk::CommandBufferAllocateInfo allocInfo{};
+    allocInfo.level = vk::CommandBufferLevel::ePrimary;
+    allocInfo.commandPool = *commandPool;
+    allocInfo.commandBufferCount = 1;
+
+    auto cmdBuffers = core.GetRaiiDevice().allocateCommandBuffers(allocInfo);
+    auto& cmd = cmdBuffers[0];
+
+    vk::CommandBufferBeginInfo beginInfo{};
+    beginInfo.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+    cmd.begin(beginInfo);
+
+    vk::ImageMemoryBarrier barrier{};
+    barrier.image = image;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+    barrier.subresourceRange.baseArrayLayer = 0;
+    barrier.subresourceRange.layerCount = 1;
+    barrier.subresourceRange.levelCount = 1;
+
+    // Generate mip chain by blitting from each level to the next.
+    for (uint32_t i = 1; i < mipLevels; ++i) {
+        // Transition previous mip to transfer source.
+        barrier.subresourceRange.baseMipLevel = i - 1;
+        barrier.oldLayout = vk::ImageLayout::eTransferDstOptimal;
+        barrier.newLayout = vk::ImageLayout::eTransferSrcOptimal;
+        barrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
+        barrier.dstAccessMask = vk::AccessFlagBits::eTransferRead;
+
+        cmd.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
+                            vk::PipelineStageFlagBits::eTransfer, vk::DependencyFlags{}, nullptr,
+                            nullptr, barrier);
+
+        // Blit from previous level.
+        vk::ImageBlit blit{};
+        blit.srcOffsets[0] = vk::Offset3D{0, 0, 0};
+        blit.srcOffsets[1] = vk::Offset3D{std::max(static_cast<int32_t>(width >> (i - 1)), 1),
+                                          std::max(static_cast<int32_t>(height >> (i - 1)), 1), 1};
+        blit.srcSubresource.aspectMask = vk::ImageAspectFlagBits::eColor;
+        blit.srcSubresource.mipLevel = i - 1;
+        blit.srcSubresource.baseArrayLayer = 0;
+        blit.srcSubresource.layerCount = 1;
+        blit.dstOffsets[0] = vk::Offset3D{0, 0, 0};
+        blit.dstOffsets[1] = vk::Offset3D{std::max(static_cast<int32_t>(width >> i), 1),
+                                          std::max(static_cast<int32_t>(height >> i), 1), 1};
+        blit.dstSubresource.aspectMask = vk::ImageAspectFlagBits::eColor;
+        blit.dstSubresource.mipLevel = i;
+        blit.dstSubresource.baseArrayLayer = 0;
+        blit.dstSubresource.layerCount = 1;
+
+        cmd.blitImage(image, vk::ImageLayout::eTransferSrcOptimal, image,
+                      vk::ImageLayout::eTransferDstOptimal, blit, vk::Filter::eLinear);
+
+        // Transition previous mip to shader read-only.
+        barrier.oldLayout = vk::ImageLayout::eTransferSrcOptimal;
+        barrier.newLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+        barrier.srcAccessMask = vk::AccessFlagBits::eTransferRead;
+        barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
+
+        cmd.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
+                            vk::PipelineStageFlagBits::eFragmentShader, vk::DependencyFlags{},
+                            nullptr, nullptr, barrier);
+    }
+
+    // Transition final mip level to shader read-only.
+    barrier.subresourceRange.baseMipLevel = mipLevels - 1;
+    barrier.oldLayout = vk::ImageLayout::eTransferDstOptimal;
+    barrier.newLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+    barrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
+    barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
+
+    cmd.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
+                        vk::PipelineStageFlagBits::eFragmentShader, vk::DependencyFlags{}, nullptr,
+                        nullptr, barrier);
 
     cmd.end();
 
@@ -178,6 +277,7 @@ void CreateTextureFromModel(VulkanCore& core, vk::raii::CommandPool& commandPool
     const uint32_t width = texture->_width;
     const uint32_t height = texture->_height;
     const vk::DeviceSize imageSize = texture->_data.size();
+    const uint32_t mipLevels = std::bit_width(std::max(width, height));
 
     // Create staging buffer.
     vk::raii::Buffer stagingBuffer{nullptr};
@@ -192,21 +292,21 @@ void CreateTextureFromModel(VulkanCore& core, vk::raii::CommandPool& commandPool
     std::memcpy(data, texture->_data.data(), static_cast<size_t>(imageSize));
     stagingBufferMemory.unmapMemory();
 
-    // Create GPU image.
-    CreateImage(core, width, height, format, vk::ImageTiling::eOptimal,
-                vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
+    // Create GPU image with mip levels.
+    CreateImage(core, width, height, mipLevels, format, vk::ImageTiling::eOptimal,
+                vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst |
+                    vk::ImageUsageFlagBits::eSampled,
                 vk::MemoryPropertyFlagBits::eDeviceLocal, image, imageMemory);
 
     // Transition image to transfer destination.
     TransitionImageLayout(core, commandPool, *image, format, vk::ImageLayout::eUndefined,
-                          vk::ImageLayout::eTransferDstOptimal);
+                          vk::ImageLayout::eTransferDstOptimal, mipLevels);
 
-    // Copy buffer to image.
+    // Copy buffer to base mip level.
     CopyBufferToImage(core, commandPool, *stagingBuffer, *image, width, height);
 
-    // Transition image to shader read.
-    TransitionImageLayout(core, commandPool, *image, format, vk::ImageLayout::eTransferDstOptimal,
-                          vk::ImageLayout::eShaderReadOnlyOptimal);
+    // Generate mipmaps (transitions to shader read only).
+    GenerateMipmaps(core, commandPool, *image, format, width, height, mipLevels);
 
     // Create image view.
     vk::ImageViewCreateInfo viewInfo{};
@@ -215,7 +315,7 @@ void CreateTextureFromModel(VulkanCore& core, vk::raii::CommandPool& commandPool
     viewInfo.format = format;
     viewInfo.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
     viewInfo.subresourceRange.baseMipLevel = 0;
-    viewInfo.subresourceRange.levelCount = 1;
+    viewInfo.subresourceRange.levelCount = mipLevels;
     viewInfo.subresourceRange.baseArrayLayer = 0;
     viewInfo.subresourceRange.layerCount = 1;
 
@@ -1292,14 +1392,14 @@ void VulkanRenderer::CreateDefaultTextures() {
             memcpy(data, pixelData, static_cast<size_t>(imageSize));
             stagingBufferMemory.unmapMemory();
 
-            // Create image.
-            CreateImage(*_core, 1, 1, format, vk::ImageTiling::eOptimal,
+            // Create image (1x1 textures don't need mipmaps).
+            CreateImage(*_core, 1, 1, 1, format, vk::ImageTiling::eOptimal,
                         vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
                         vk::MemoryPropertyFlagBits::eDeviceLocal, image, imageMemory);
 
             // Transition image to transfer dst.
             TransitionImageLayout(*_core, _commandPool, *image, format, vk::ImageLayout::eUndefined,
-                                  vk::ImageLayout::eTransferDstOptimal);
+                                  vk::ImageLayout::eTransferDstOptimal, 1);
 
             // Copy buffer to image.
             CopyBufferToImage(*_core, _commandPool, *stagingBuffer, *image, 1, 1);
@@ -1307,7 +1407,7 @@ void VulkanRenderer::CreateDefaultTextures() {
             // Transition image to shader read.
             TransitionImageLayout(*_core, _commandPool, *image, format,
                                   vk::ImageLayout::eTransferDstOptimal,
-                                  vk::ImageLayout::eShaderReadOnlyOptimal);
+                                  vk::ImageLayout::eShaderReadOnlyOptimal, 1);
 
             // Create image view.
             vk::ImageViewCreateInfo viewInfo{};
@@ -1363,7 +1463,7 @@ void VulkanRenderer::CreateModelSampler() {
     samplerInfo.mipmapMode = vk::SamplerMipmapMode::eLinear;
     samplerInfo.mipLodBias = 0.0f;
     samplerInfo.minLod = 0.0f;
-    samplerInfo.maxLod = 0.0f;
+    samplerInfo.maxLod = VK_LOD_CLAMP_NONE;
 
     _modelTextureSampler = _core->GetRaiiDevice().createSampler(samplerInfo);
 
