@@ -74,6 +74,7 @@ class VulkanRenderer final : public IRenderer {
         vk::raii::DeviceMemory _uniformBufferMemory{nullptr};
         void* _uniformBufferMapped{nullptr};
         vk::raii::DescriptorSet _descriptorSet{nullptr};
+        bool _doubleSided{false};
         
         // PBR textures
         vk::raii::Image _baseColorTexture{nullptr};
@@ -102,6 +103,11 @@ class VulkanRenderer final : public IRenderer {
         uint32_t _indexCount{0};
         int _materialIndex{-1};
         glm::vec3 _centroid{0.0f};
+    };
+
+    struct SubMeshDepthInfo {
+        float _depth{0.0f};
+        uint32_t _meshIndex{0};
     };
 
     struct DescriptorPoolInfo {
@@ -144,10 +150,11 @@ class VulkanRenderer final : public IRenderer {
     void CreateMaterials(const Model& model);
     void CreateDefaultMaterial();
     void CreateMaterialDescriptorSets();
-    void CreateModelPipeline();
+    void CreateModelPipelines();
 
     // Frame update
     void UpdateUniforms(const glm::mat4& modelMatrix, const CameraUniformsInput& camera);
+    void SortTransparentMeshes(const glm::mat4& modelMatrix, const glm::mat4& viewMatrix);
 
     // Helpers
     vk::Format FindDepthFormat() const;
@@ -205,7 +212,9 @@ class VulkanRenderer final : public IRenderer {
     // Model related data
 
     vk::raii::PipelineLayout _modelPipelineLayout{nullptr};
-    vk::raii::Pipeline _modelPipeline{nullptr};
+    vk::raii::Pipeline _modelPipelineOpaqueSingleSided{nullptr};
+    vk::raii::Pipeline _modelPipelineOpaqueDoubleSided{nullptr};
+    vk::raii::Pipeline _modelPipelineTransparent{nullptr};
 
     vk::raii::Buffer _vertexBuffer{nullptr};
     vk::raii::DeviceMemory _vertexBufferMemory{nullptr};
@@ -217,7 +226,10 @@ class VulkanRenderer final : public IRenderer {
     std::vector<vk::raii::DeviceMemory> _modelUniformBuffersMemory;
     std::vector<void*> _modelUniformBuffersMapped;
 
-    std::vector<SubMesh> _subMeshes;
+    std::vector<SubMesh> _opaqueMeshesSingleSided;
+    std::vector<SubMesh> _opaqueMeshesDoubleSided;
+    std::vector<SubMesh> _transparentMeshes;
+    std::vector<SubMeshDepthInfo> _transparentMeshesDepthSorted;
     std::vector<Material> _materials;
 
     // Default textures for materials

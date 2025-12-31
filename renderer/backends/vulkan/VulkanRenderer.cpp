@@ -254,7 +254,7 @@ VulkanRenderer::VulkanRenderer(GLFWwindow* window) : _window(window) {
     CreateEnvironmentPipelineLayout();
     CreateModelPipelineLayout();
     CreateEnvironmentPipeline();
-    CreateModelPipeline();
+    CreateModelPipelines();
 
     // Frame resources
     CreateFramebuffers();
@@ -324,6 +324,9 @@ void VulkanRenderer::Render(const glm::mat4& modelMatrix, const CameraUniformsIn
     // Update uniforms for this frame.
     UpdateUniforms(modelMatrix, camera);
 
+    // Sort transparent meshes by depth (back-to-front).
+    SortTransparentMeshes(modelMatrix, camera.viewMatrix);
+
     // Reset the fence only when we're sure we'll submit work.
     device.resetFences(*_inFlightFences[_currentFrame]);
 
@@ -375,34 +378,67 @@ void VulkanRenderer::Render(const glm::mat4& modelMatrix, const CameraUniformsIn
     cmd.draw(3, 1, 0, 0);
 
     // Draw model if one has been loaded.
-    if (*_vertexBuffer && *_indexBuffer && !_subMeshes.empty()) {
-        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *_modelPipeline);
-
-        // Rebind descriptor sets with model pipeline layout
-        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *_modelPipelineLayout, 0,
-                               *_globalDescriptorSets[_currentFrame], nullptr);
-
-        // Bind vertex and index buffers.
+    if (*_vertexBuffer && *_indexBuffer) {
+        // Bind vertex and index buffers (shared by all pipelines).
         vk::Buffer vertexBuffers[] = {*_vertexBuffer};
         vk::DeviceSize offsets[] = {0};
         cmd.bindVertexBuffers(0, vertexBuffers, offsets);
         cmd.bindIndexBuffer(*_indexBuffer, 0, vk::IndexType::eUint32);
 
-        // Push model uniforms (model matrix + normal matrix).
+        // Push model uniforms (shared by all pipelines).
         ModelUniforms modelUniforms{};
         modelUniforms.modelMatrix = modelMatrix;
         modelUniforms.normalMatrix = glm::transpose(glm::inverse(modelMatrix));
         cmd.pushConstants<ModelUniforms>(*_modelPipelineLayout, vk::ShaderStageFlagBits::eVertex, 0,
                                          modelUniforms);
 
-        // Draw each submesh.
-        for (const auto& submesh : _subMeshes) {
-            // Bind material descriptor set (set 1).
-            const Material& mat = _materials[submesh._materialIndex];
-            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *_modelPipelineLayout, 1,
-                                   *mat._descriptorSet, nullptr);
+        // Draw opaque single-sided meshes.
+        if (!_opaqueMeshesSingleSided.empty()) {
+            cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *_modelPipelineOpaqueSingleSided);
 
-            cmd.drawIndexed(submesh._indexCount, 1, submesh._firstIndex, 0, 0);
+            // Rebind descriptor sets with opaque single-sided pipeline.
+            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *_modelPipelineLayout, 0,
+                                   *_globalDescriptorSets[_currentFrame], nullptr);
+
+            for (const auto& submesh : _opaqueMeshesSingleSided) {
+                const Material& mat = _materials[submesh._materialIndex];
+                cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *_modelPipelineLayout, 1,
+                                       *mat._descriptorSet, nullptr);
+                cmd.drawIndexed(submesh._indexCount, 1, submesh._firstIndex, 0, 0);
+            }
+        }
+
+        // Draw opaque double-sided meshes.
+        if (!_opaqueMeshesDoubleSided.empty()) {
+            cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *_modelPipelineOpaqueDoubleSided);
+
+            // Rebind descriptor sets with opaque double-sided pipeline.
+            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *_modelPipelineLayout, 0,
+                                   *_globalDescriptorSets[_currentFrame], nullptr);
+
+            for (const auto& submesh : _opaqueMeshesDoubleSided) {
+                const Material& mat = _materials[submesh._materialIndex];
+                cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *_modelPipelineLayout, 1,
+                                       *mat._descriptorSet, nullptr);
+                cmd.drawIndexed(submesh._indexCount, 1, submesh._firstIndex, 0, 0);
+            }
+        }
+
+        // Draw transparent meshes (sorted back-to-front).
+        if (!_transparentMeshesDepthSorted.empty()) {
+            cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *_modelPipelineTransparent);
+
+            // Rebind descriptor sets with transparent pipeline.
+            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *_modelPipelineLayout, 0,
+                                   *_globalDescriptorSets[_currentFrame], nullptr);
+
+            for (const auto& depthInfo : _transparentMeshesDepthSorted) {
+                const SubMesh& submesh = _transparentMeshes[depthInfo._meshIndex];
+                const Material& mat = _materials[submesh._materialIndex];
+                cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *_modelPipelineLayout, 1,
+                                       *mat._descriptorSet, nullptr);
+                cmd.drawIndexed(submesh._indexCount, 1, submesh._firstIndex, 0, 0);
+            }
         }
     }
 
@@ -484,8 +520,12 @@ void VulkanRenderer::SetModel(const Model& model) {
     // Create descriptor sets for all materials.
     CreateMaterialDescriptorSets();
 
-    // Store submesh information for rendering.
-    _subMeshes.clear();
+    // Store submesh information, sorting by alpha mode and doubleSided into 3 lists.
+    _opaqueMeshesSingleSided.clear();
+    _opaqueMeshesDoubleSided.clear();
+    _transparentMeshes.clear();
+    _opaqueMeshesSingleSided.reserve(model.GetSubMeshes().size());
+
     for (const auto& srcMesh : model.GetSubMeshes()) {
         int materialIndex =
             hasInvalidMaterialIndex(srcMesh) ? defaultMaterialIndex : srcMesh._materialIndex;
@@ -494,11 +534,26 @@ void VulkanRenderer::SetModel(const Model& model) {
                            ._indexCount = srcMesh._indexCount,
                            ._materialIndex = materialIndex,
                            ._centroid = (srcMesh._minBounds + srcMesh._maxBounds) * 0.5f};
-        _subMeshes.push_back(dstMesh);
+
+        const Material& material = _materials[materialIndex];
+
+        // Sort into 3 categories: opaque (single/double-sided) or transparent.
+        if (material._uniforms.alphaMode == 2) { // 2 = Blend
+            // Transparent materials always render double-sided.
+            _transparentMeshes.push_back(dstMesh);
+        } else if (material._doubleSided) {
+            // Opaque double-sided.
+            _opaqueMeshesDoubleSided.push_back(dstMesh);
+        } else {
+            // Opaque single-sided.
+            _opaqueMeshesSingleSided.push_back(dstMesh);
+        }
     }
 
-    VK_LOG_INFO("Model set: {} submeshes, {} materials, {} total indices.", _subMeshes.size(),
-                _materials.size(), _indexCount);
+    VK_LOG_INFO("Model set: {} opaque single-sided, {} opaque double-sided, {} transparent "
+                "submeshes, {} materials, {} total indices.",
+                _opaqueMeshesSingleSided.size(), _opaqueMeshesDoubleSided.size(),
+                _transparentMeshes.size(), _materials.size(), _indexCount);
 }
 
 void VulkanRenderer::SetEnvironment([[maybe_unused]] const Environment& environment) {
@@ -1407,6 +1462,7 @@ void VulkanRenderer::CreateMaterials(const Model& model) {
         dstMat._uniforms.occlusionStrength = srcMat._occlusionStrength;
         dstMat._uniforms.alphaCutoff = srcMat._alphaCutoff;
         dstMat._uniforms.alphaMode = static_cast<int>(srcMat._alphaMode);
+        dstMat._doubleSided = srcMat._doubleSided;
 
         // Create uniform buffer for this material.
         const vk::DeviceSize bufferSize = sizeof(MaterialUniforms);
@@ -1627,7 +1683,7 @@ void VulkanRenderer::CreateMaterialDescriptorSets() {
     VK_LOG_INFO("Created {} material descriptor sets with textures.", _materials.size());
 }
 
-void VulkanRenderer::CreateModelPipeline() {
+void VulkanRenderer::CreateModelPipelines() {
     const auto& device = _core->GetRaiiDevice();
     const std::filesystem::path shaderPath{GFX_VULKAN_SHADER_PATH};
 
@@ -1730,7 +1786,7 @@ void VulkanRenderer::CreateModelPipeline() {
     depthStencil.depthBoundsTestEnable = VK_FALSE;
     depthStencil.stencilTestEnable = VK_FALSE;
 
-    // Color blending: no blending, write all components.
+    // Color blending: no blending for opaque, blending for transparent.
     vk::PipelineColorBlendAttachmentState colorBlendAttachment{};
     colorBlendAttachment.colorWriteMask =
         vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
@@ -1752,7 +1808,7 @@ void VulkanRenderer::CreateModelPipeline() {
     dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
     dynamicState.pDynamicStates = dynamicStates.data();
 
-    // Create the graphics pipeline.
+    // Create the graphics pipeline info.
     vk::GraphicsPipelineCreateInfo pipelineInfo{};
     pipelineInfo.stageCount = static_cast<uint32_t>(shaderStages.size());
     pipelineInfo.pStages = shaderStages.data();
@@ -1768,9 +1824,28 @@ void VulkanRenderer::CreateModelPipeline() {
     pipelineInfo.renderPass = *_renderPass;
     pipelineInfo.subpass = 0;
 
-    _modelPipeline = device.createGraphicsPipeline(nullptr, pipelineInfo);
+    // Create opaque single-sided pipeline (cull back faces, depth writes enabled, no blending).
+    rasterizer.cullMode = vk::CullModeFlagBits::eBack;
+    _modelPipelineOpaqueSingleSided = device.createGraphicsPipeline(nullptr, pipelineInfo);
 
-    VK_LOG_INFO("Model pipeline created.");
+    // Create opaque double-sided pipeline (no culling, depth writes enabled, no blending).
+    rasterizer.cullMode = vk::CullModeFlagBits::eNone;
+    _modelPipelineOpaqueDoubleSided = device.createGraphicsPipeline(nullptr, pipelineInfo);
+
+    // Create transparent pipeline (no culling, depth writes disabled, blending enabled).
+    depthStencil.depthWriteEnable = VK_FALSE;
+
+    colorBlendAttachment.blendEnable = VK_TRUE;
+    colorBlendAttachment.srcColorBlendFactor = vk::BlendFactor::eSrcAlpha;
+    colorBlendAttachment.dstColorBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha;
+    colorBlendAttachment.colorBlendOp = vk::BlendOp::eAdd;
+    colorBlendAttachment.srcAlphaBlendFactor = vk::BlendFactor::eSrcAlpha;
+    colorBlendAttachment.dstAlphaBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha;
+    colorBlendAttachment.alphaBlendOp = vk::BlendOp::eAdd;
+
+    _modelPipelineTransparent = device.createGraphicsPipeline(nullptr, pipelineInfo);
+
+    VK_LOG_INFO("Model pipelines created: opaque (single-sided + double-sided) + transparent.");
 }
 
 // -------------------------------------------------------------------------
@@ -1786,6 +1861,34 @@ void VulkanRenderer::UpdateUniforms(const glm::mat4& /*modelMatrix*/,
     ubo.cameraPosition = camera.cameraPosition;
 
     std::memcpy(_globalUniformBuffersMapped[_currentFrame], &ubo, sizeof(ubo));
+}
+
+void VulkanRenderer::SortTransparentMeshes(const glm::mat4& modelMatrix,
+                                           const glm::mat4& viewMatrix) {
+    glm::mat4 modelView = viewMatrix * modelMatrix;
+
+    _transparentMeshesDepthSorted.clear();
+    _transparentMeshesDepthSorted.reserve(_transparentMeshes.size());
+
+    for (uint32_t i = 0; i < _transparentMeshes.size(); ++i) {
+        const SubMesh& subMesh = _transparentMeshes[i];
+
+        // Transform centroid to view space to get depth.
+        glm::vec4 centroid = modelView * glm::vec4(subMesh._centroid, 1.0f);
+        float depth = centroid.z;
+
+        // Only render objects in front of camera (negative Z in view space).
+        if (depth < 0.0f) {
+            SubMeshDepthInfo depthInfo = {._depth = depth, ._meshIndex = i};
+            _transparentMeshesDepthSorted.push_back(depthInfo);
+        }
+    }
+
+    // Sort back-to-front (furthest first, so smallest depth values first).
+    std::ranges::sort(_transparentMeshesDepthSorted,
+                      [](const SubMeshDepthInfo& a, const SubMeshDepthInfo& b) {
+                          return a._depth < b._depth; // Furthest objects first
+                      });
 }
 
 // -------------------------------------------------------------------------
