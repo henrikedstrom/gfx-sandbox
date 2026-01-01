@@ -1,9 +1,9 @@
-#pragma once
-
 /// @file  VulkanCore.h
 /// @brief Manages core Vulkan objects: Instance, Physical Device, Logical Device, and Queues.
 ///
 /// Uses Vulkan-HPP RAII wrappers for automatic resource cleanup.
+
+#pragma once
 
 // Vulkan-HPP Configuration (must be included first)
 #include "VulkanConfig.h"

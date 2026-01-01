@@ -3,7 +3,6 @@
 
 // Standard Library Headers
 #include <algorithm>
-#include <bit>
 #include <chrono>
 #include <memory>
 #include <string>
@@ -35,6 +34,7 @@
 #include "Model.h"
 #include "PanoramaToCubemapConverter.h"
 #include "ShaderUtils.h"
+#include "TextureUtils.h"
 #include "WebgpuConfig.h"
 
 //----------------------------------------------------------------------
@@ -53,14 +53,6 @@ namespace {
 constexpr uint32_t kIrradianceMapSize = 64;
 constexpr uint32_t kPrecomputedSpecularMapSize = 512;
 constexpr uint32_t kBRDFIntegrationLUTMapSize = 128;
-
-int FloorPow2(int x) {
-    int power = 1;
-    while (power * 2 <= x) {
-        power *= 2;
-    }
-    return power;
-}
 
 template <typename TextureInfo>
 void CreateTexture(const TextureInfo* textureInfo, wgpu::TextureFormat format,
@@ -82,7 +74,7 @@ void CreateTexture(const TextureInfo* textureInfo, wgpu::TextureFormat format,
     }
 
     // Compute the number of mip levels.
-    uint32_t mipLevelCount = std::bit_width(std::max(width, height));
+    uint32_t mipLevelCount = TextureUtils::CalcMipLevels(width, height);
 
     if (kind == MipmapGenerator::MipKind::SRGB2D) {
         // Create final SRGB texture directly with render attachment usage.
@@ -182,7 +174,7 @@ void CreateEnvironmentTexture(wgpu::Device device, wgpu::TextureViewDimension ty
                               wgpu::TextureView& textureView) {
     // Compute the number of mip levels.
     const uint32_t mipLevelCount =
-        mipmapping ? std::bit_width(std::max(size.width, size.height)) : 1;
+        mipmapping ? TextureUtils::CalcMipLevels(size.width, size.height) : 1;
 
     // Create a WebGPU texture descriptor with mipmapping enabled.
     wgpu::TextureDescriptor textureDescriptor{};
@@ -898,7 +890,7 @@ void WebgpuRenderer::CreateUniformBuffers() {
 
 void WebgpuRenderer::CreateEnvironmentTextures(const Environment& environment) {
     const Environment::Texture& panoramaTexture = environment.GetTexture();
-    uint32_t environmentCubeSize = FloorPow2(panoramaTexture._width);
+    uint32_t environmentCubeSize = TextureUtils::FloorPow2(panoramaTexture._width);
 
     // Create helpers.
     MipmapGenerator mipmapGenerator(_device);
