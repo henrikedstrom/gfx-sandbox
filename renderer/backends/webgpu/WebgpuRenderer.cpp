@@ -913,6 +913,12 @@ void WebgpuRenderer::CreateEnvironmentTextures(const Environment& environment) {
     mipmapGenerator.GenerateMipmaps(_iblIrradianceTexture,
                                     {kIrradianceMapSize, kIrradianceMapSize, 6},
                                     MipmapGenerator::MipKind::Float16Cube);
+
+    // Wait for GPU to finish IBL work before returning to avoid rendering with invalid textures.
+    wgpu::Future workDoneFuture = _device.GetQueue().OnSubmittedWorkDone(
+        wgpu::CallbackMode::WaitAnyOnly,
+        [](wgpu::QueueWorkDoneStatus /*status*/, const char* /*message*/) {});
+    _instance.WaitAny(workDoneFuture, UINT64_MAX);
 }
 
 void WebgpuRenderer::CreateMaterials(const Model& model) {
