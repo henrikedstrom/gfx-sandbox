@@ -226,18 +226,21 @@ fn toneMapPBRNeutral(colorIn: vec3f) -> vec3f {
     return mix(color, newPeak * vec3f(1.0, 1.0, 1.0), g);
 }
 
-fn toneMap(colorIn: vec3f) -> vec3f {
-  const gamma = 2.2;
-  const invGamma = 1.0 / gamma;
+fn linearToSRGB(linear: vec3<f32>) -> vec3<f32> {
+    let cutoff = linear < vec3<f32>(0.0031308);
+    let higher = vec3<f32>(1.055) * pow(linear, vec3<f32>(1.0 / 2.4)) - vec3<f32>(0.055);
+    let lower = linear * vec3<f32>(12.92);
+    return select(higher, lower, cutoff);
+}
 
+fn toneMap(colorIn: vec3f) -> vec3f {
   const exposure = 1.0;
 
   var color = colorIn * exposure;
 
   color = toneMapPBRNeutral(color);
 
-  // Linear to sRGB
-  color = pow(color, vec3f(invGamma));
+  color = linearToSRGB(color);
 
   return color;
 }
