@@ -782,6 +782,7 @@ void WebgpuRenderer::CreateSamplers() {
         samplerDescriptor.minFilter = wgpu::FilterMode::Linear;
         samplerDescriptor.magFilter = wgpu::FilterMode::Linear;
         samplerDescriptor.mipmapFilter = wgpu::MipmapFilterMode::Linear;
+        samplerDescriptor.maxAnisotropy = 16;
         _modelTextureSampler = _device.CreateSampler(&samplerDescriptor);
     }
 
