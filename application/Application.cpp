@@ -209,7 +209,7 @@ void Application::MainLoop() {
 }
 
 void Application::ProcessFrame() {
-    auto currentTime = std::chrono::high_resolution_clock::now();
+    auto currentTime = std::chrono::steady_clock::now();
     float deltaTimeMs = 16.67f;
 
     if (_hasLastTime) {

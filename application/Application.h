@@ -64,6 +64,6 @@ class Application {
     GLFWwindow* _window{nullptr};
 
     // Frame timing
-    std::chrono::high_resolution_clock::time_point _lastTime{};
+    std::chrono::steady_clock::time_point _lastTime{};
     bool _hasLastTime{false};
 };

@@ -22,7 +22,7 @@ namespace {
 void DownsampleTexture(Environment::Texture& texture, int origWidth, int origHeight) {
     std::cout << "Downsampling texture from " << origWidth << "x" << origHeight << " to 4096x2048."
               << std::endl;
-    auto start = std::chrono::high_resolution_clock::now();
+    auto start = std::chrono::steady_clock::now();
 
     const uint32_t newWidth = 4096;
     const uint32_t newHeight = 2048;
@@ -53,7 +53,7 @@ void DownsampleTexture(Environment::Texture& texture, int origWidth, int origHei
         }
     }
 
-    auto end = std::chrono::high_resolution_clock::now();
+    auto end = std::chrono::steady_clock::now();
     std::chrono::duration<double> elapsed = end - start;
     std::cout << "Downsampling took " << elapsed.count() << " seconds." << std::endl;
 
@@ -64,7 +64,7 @@ void DownsampleTexture(Environment::Texture& texture, int origWidth, int origHei
 
 template <typename LoaderFunc, typename... Args>
 bool LoadFromSource(Environment::Texture& texture, LoaderFunc loader, Args&&... args) {
-    auto t0 = std::chrono::high_resolution_clock::now();
+    auto t0 = std::chrono::steady_clock::now();
 
     int width = 0;
     int height = 0;
@@ -91,7 +91,7 @@ bool LoadFromSource(Environment::Texture& texture, LoaderFunc loader, Args&&... 
     texture._data.resize(static_cast<size_t>(width) * static_cast<size_t>(height) * 4);
     std::copy(data, data + (width * height * 4), texture._data.begin());
 
-    auto t1 = std::chrono::high_resolution_clock::now();
+    auto t1 = std::chrono::steady_clock::now();
     double durationMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
     std::cout << "Loaded environment texture (" << width << "x" << height << ")"
               << " in " << durationMs << "ms" << std::endl;

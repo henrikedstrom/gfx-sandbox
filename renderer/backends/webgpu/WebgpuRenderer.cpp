@@ -3,8 +3,8 @@
 
 // Standard Library Headers
 #include <algorithm>
+#include <bit>
 #include <chrono>
-#include <cmath>
 #include <memory>
 #include <string>
 #include <vector>
@@ -82,8 +82,7 @@ void CreateTexture(const TextureInfo* textureInfo, wgpu::TextureFormat format,
     }
 
     // Compute the number of mip levels.
-    uint32_t mipLevelCount =
-        static_cast<uint32_t>(std::floor(std::log2(std::max(width, height)))) + 1;
+    uint32_t mipLevelCount = std::bit_width(std::max(width, height));
 
     if (kind == MipmapGenerator::MipKind::SRGB2D) {
         // Create final SRGB texture directly with render attachment usage.
@@ -183,7 +182,7 @@ void CreateEnvironmentTexture(wgpu::Device device, wgpu::TextureViewDimension ty
                               wgpu::TextureView& textureView) {
     // Compute the number of mip levels.
     const uint32_t mipLevelCount =
-        mipmapping ? static_cast<uint32_t>(std::log2(std::max(size.width, size.height))) + 1 : 1;
+        mipmapping ? std::bit_width(std::max(size.width, size.height)) : 1;
 
     // Create a WebGPU texture descriptor with mipmapping enabled.
     wgpu::TextureDescriptor textureDescriptor{};
@@ -468,7 +467,7 @@ void WebgpuRenderer::ReloadShaders() {
 }
 
 void WebgpuRenderer::SetModel(const Model& model) {
-    auto t0 = std::chrono::high_resolution_clock::now();
+    auto t0 = std::chrono::steady_clock::now();
 
     _vertexBuffer = nullptr;
     _indexBuffer = nullptr;
@@ -525,13 +524,13 @@ void WebgpuRenderer::SetModel(const Model& model) {
         }
     }
 
-    auto t1 = std::chrono::high_resolution_clock::now();
+    auto t1 = std::chrono::steady_clock::now();
     double totalMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
     WGPU_LOG_INFO("Updated Model resources in {:.2f}ms", totalMs);
 }
 
 void WebgpuRenderer::SetEnvironment(const Environment& environment) {
-    auto t0 = std::chrono::high_resolution_clock::now();
+    auto t0 = std::chrono::steady_clock::now();
 
     _environmentTexture = nullptr;
     _environmentTextureView = nullptr;
@@ -545,7 +544,7 @@ void WebgpuRenderer::SetEnvironment(const Environment& environment) {
     CreateEnvironmentTextures(environment);
     CreateGlobalBindGroup();
 
-    auto t1 = std::chrono::high_resolution_clock::now();
+    auto t1 = std::chrono::steady_clock::now();
     double totalMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
     WGPU_LOG_INFO("Updated Environment resources in {:.2f}ms", totalMs);
 }

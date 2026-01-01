@@ -388,7 +388,7 @@ void ProcessModel(const tinygltf::Model& model, std::vector<Model::Vertex>& vert
 // Model Class Implementation
 
 void Model::Load(const std::string& filename, const uint8_t* data, uint32_t size) {
-    auto t0 = std::chrono::high_resolution_clock::now();
+    auto t0 = std::chrono::steady_clock::now();
 
     tinygltf::Model model;
     tinygltf::TinyGLTF loader;
@@ -418,10 +418,10 @@ void Model::Load(const std::string& filename, const uint8_t* data, uint32_t size
     // If successful, process the model.
     if (result) {
         ClearData();
-        auto t1 = std::chrono::high_resolution_clock::now();
+        auto t1 = std::chrono::steady_clock::now();
         ProcessModel(model, _vertices, _indices, _materials, _textures, _subMeshes);
         RecomputeBounds();
-        auto t2 = std::chrono::high_resolution_clock::now();
+        auto t2 = std::chrono::steady_clock::now();
         double totalMs = std::chrono::duration<double, std::milli>(t2 - t0).count();
         double processMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
         std::cout << "Loaded model in " << totalMs << "ms (processing took: " << processMs << "ms)"
