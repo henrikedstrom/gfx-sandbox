@@ -3,7 +3,6 @@
 
 // Standard Library Headers
 #include <algorithm>
-#include <chrono>
 #include <memory>
 #include <string>
 #include <vector>
@@ -459,8 +458,6 @@ void WebgpuRenderer::ReloadShaders() {
 }
 
 void WebgpuRenderer::SetModel(const Model& model) {
-    auto t0 = std::chrono::steady_clock::now();
-
     _vertexBuffer = nullptr;
     _indexBuffer = nullptr;
 
@@ -515,14 +512,9 @@ void WebgpuRenderer::SetModel(const Model& model) {
             _opaqueMeshesSingleSided.push_back(dstSubMesh);
         }
     }
-
-    auto t1 = std::chrono::steady_clock::now();
-    double totalMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
-    WGPU_LOG_INFO("Updated Model resources in {:.2f}ms", totalMs);
 }
 
 void WebgpuRenderer::SetEnvironment(const Environment& environment) {
-    auto t0 = std::chrono::steady_clock::now();
 
     _environmentTexture = nullptr;
     _environmentTextureView = nullptr;
@@ -535,10 +527,6 @@ void WebgpuRenderer::SetEnvironment(const Environment& environment) {
 
     CreateEnvironmentTextures(environment);
     CreateGlobalBindGroup();
-
-    auto t1 = std::chrono::steady_clock::now();
-    double totalMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
-    WGPU_LOG_INFO("Updated Environment resources in {:.2f}ms", totalMs);
 }
 
 void WebgpuRenderer::InitGraphics() {

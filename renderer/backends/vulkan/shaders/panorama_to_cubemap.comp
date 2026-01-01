@@ -1,0 +1,139 @@
+#version 450
+
+//=========================================================
+// Panorama (equirectangular) to cubemap conversion
+// - Input: 2D equirectangular texture (texture2D)
+// - Output: RGBA16F cubemap as 2D-array storage (6 layers)
+// - Per-face selection via set 1 faceIndex; manual bilinear sampling
+//=========================================================
+
+// Set 0 - Common parameters
+layout(set = 0, binding = 0) uniform sampler inputSampler;
+layout(set = 0, binding = 1) uniform texture2D inputTexture;
+layout(set = 0, binding = 2, rgba16f) uniform writeonly image2DArray outputTexture;
+
+// Push constants - Per-face parameters
+layout(push_constant) uniform PushConstants {
+    uint faceIndex;
+} params;
+
+//=========================================================
+// Constants
+//=========================================================
+
+const float PI = 3.14159265359;
+
+//=========================================================
+// Utility Functions
+//=========================================================
+
+// Converts a direction vector to equirectangular UV coordinates.
+// Assumes a normalized direction; returns UV in [0,1].
+vec2 dirToUV(vec3 dir) {
+    return vec2(
+        0.5 + 0.5 * atan(dir.z, dir.x) / PI,
+        acos(clamp(dir.y, -1.0, 1.0)) / PI
+    );
+}
+
+// Converts 2D UV coordinates (in [0,1], remapped internally to [-1,1])
+// to a 3D direction based on the selected cube face.
+vec3 uvToDirection(vec2 uv, uint face) {
+    const vec3 faceDirs[6] = vec3[6](
+        vec3( 1.0,  0.0,  0.0), // +X
+        vec3(-1.0,  0.0,  0.0), // -X
+        vec3( 0.0,  1.0,  0.0), // +Y
+        vec3( 0.0, -1.0,  0.0), // -Y
+        vec3( 0.0,  0.0,  1.0), // +Z
+        vec3( 0.0,  0.0, -1.0)  // -Z
+    );
+
+    const vec3 upVectors[6] = vec3[6](
+        vec3( 0.0, -1.0,  0.0), // +X
+        vec3( 0.0, -1.0,  0.0), // -X
+        vec3( 0.0,  0.0,  1.0), // +Y
+        vec3( 0.0,  0.0, -1.0), // -Y
+        vec3( 0.0, -1.0,  0.0), // +Z
+        vec3( 0.0, -1.0,  0.0)  // -Z
+    );
+
+    const vec3 rightVectors[6] = vec3[6](
+        vec3( 0.0,  0.0, -1.0), // +X
+        vec3( 0.0,  0.0,  1.0), // -X
+        vec3( 1.0,  0.0,  0.0), // +Y
+        vec3( 1.0,  0.0,  0.0), // -Y
+        vec3( 1.0,  0.0,  0.0), // +Z
+        vec3(-1.0,  0.0,  0.0)  // -Z
+    );
+
+    float u = (uv.x * 2.0) - 1.0;
+    float v = (uv.y * 2.0) - 1.0;
+
+    return normalize(faceDirs[face] + (u * rightVectors[face]) + (v * upVectors[face]));
+}
+
+//=========================================================
+// Compute Shader Entry Point
+//=========================================================
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+void main() {
+    // Get the global invocation ID.
+    uvec3 id = gl_GlobalInvocationID;
+
+    // Get the dimensions of the output texture (assumed to be square).
+    ivec2 outputSize = imageSize(outputTexture).xy;
+    if (id.x >= outputSize.x || id.y >= outputSize.y) {
+        return;
+    }
+
+    // Convert pixel coordinates (id.xy) to normalized [0,1] UV coordinates.
+    vec2 uvDst = vec2(float(id.x) / float(outputSize.x), float(id.y) / float(outputSize.y));
+    vec3 dir = uvToDirection(uvDst, params.faceIndex);
+
+    // Convert the direction to equirectangular UV coordinates.
+    vec2 uvSrc = clamp(dirToUV(dir), vec2(0.0), vec2(1.0));
+
+    // --- Manual Bilinear Filtering (typically needed for float32 textures) ---
+
+    // Obtain the dimensions of the input (panorama) texture.
+    ivec2 dims = textureSize(sampler2D(inputTexture, inputSampler), 0);
+    float width = float(dims.x);
+    float height = float(dims.y);
+
+    // Compute the source texel coordinates.
+    float srcXF = uvSrc.x * (width - 1.0);
+    float srcYF = uvSrc.y * (height - 1.0);
+
+    // Compute the integer coordinate of the top-left texel.
+    int x0 = int(floor(srcXF));
+    int y0 = int(floor(srcYF));
+
+    // Compute the neighboring texel positions:
+    // - Wrap horizontally (equirectangular texture).
+    // - Clamp vertically.
+    int x1 = (x0 + 1) % dims.x;
+    int y1 = min(y0 + 1, dims.y - 1);
+
+    // Compute the fractional part for interpolation.
+    float fx = srcXF - floor(srcXF);
+    float fy = srcYF - floor(srcYF);
+
+    // Fetch the four nearest texels.
+    vec4 c00 = texelFetch(sampler2D(inputTexture, inputSampler), ivec2(x0, y0), 0);
+    vec4 c10 = texelFetch(sampler2D(inputTexture, inputSampler), ivec2(x1, y0), 0);
+    vec4 c01 = texelFetch(sampler2D(inputTexture, inputSampler), ivec2(x0, y1), 0);
+    vec4 c11 = texelFetch(sampler2D(inputTexture, inputSampler), ivec2(x1, y1), 0);
+
+    // Interpolate horizontally, then vertically.
+    vec4 top = mix(c00, c10, fx);
+    vec4 bottom = mix(c01, c11, fx);
+    vec4 color = mix(top, bottom, fy);
+
+    // --- End Manual Filtering ---
+
+    // Write the color to the output cubemap face.
+    imageStore(outputTexture, ivec3(id.xy, int(params.faceIndex)), color);
+}
+

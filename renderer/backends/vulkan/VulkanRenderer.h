@@ -1,7 +1,7 @@
-#pragma once
-
 /// @file  VulkanRenderer.h
 /// @brief IRenderer implementation using the Vulkan graphics API.
+
+#pragma once
 
 // Vulkan-HPP Configuration (must be included first)
 #include "VulkanConfig.h"
@@ -75,24 +75,24 @@ class VulkanRenderer final : public IRenderer {
         void* _uniformBufferMapped{nullptr};
         vk::raii::DescriptorSet _descriptorSet{nullptr};
         bool _doubleSided{false};
-        
+
         // PBR textures
         vk::raii::Image _baseColorTexture{nullptr};
         vk::raii::DeviceMemory _baseColorTextureMemory{nullptr};
         vk::raii::ImageView _baseColorTextureView{nullptr};
-        
+
         vk::raii::Image _metallicRoughnessTexture{nullptr};
         vk::raii::DeviceMemory _metallicRoughnessTextureMemory{nullptr};
         vk::raii::ImageView _metallicRoughnessTextureView{nullptr};
-        
+
         vk::raii::Image _normalTexture{nullptr};
         vk::raii::DeviceMemory _normalTextureMemory{nullptr};
         vk::raii::ImageView _normalTextureView{nullptr};
-        
+
         vk::raii::Image _occlusionTexture{nullptr};
         vk::raii::DeviceMemory _occlusionTextureMemory{nullptr};
         vk::raii::ImageView _occlusionTextureView{nullptr};
-        
+
         vk::raii::Image _emissiveTexture{nullptr};
         vk::raii::DeviceMemory _emissiveTextureMemory{nullptr};
         vk::raii::ImageView _emissiveTextureView{nullptr};
@@ -133,18 +133,19 @@ class VulkanRenderer final : public IRenderer {
     void CreateUniformBuffers();
     void CreateGlobalDescriptorSetLayout();
     void CreateDescriptorPool();
-    void CreateDescriptorSets();
+    void CreateGlobalDescriptorSets();
 
     // Environment
     void CreateEnvironmentPipelineLayout();
     void CreateEnvironmentPipeline();
     void CreateDefaultCubemap();
+    void CreateEnvironmentTextures(const Environment& environment);
 
     // Model
     void CreateModelDescriptorSetLayout();
     void CreateModelPipelineLayout();
     void CreateDefaultTextures();
-    void CreateModelSampler();
+    void CreateSamplers();
     void CreateVertexBuffer(const Model& model);
     void CreateIndexBuffer(const Model& model);
     void CreateMaterials(const Model& model);
@@ -200,13 +201,21 @@ class VulkanRenderer final : public IRenderer {
     vk::raii::Image _defaultCubemap{nullptr};
     vk::raii::DeviceMemory _defaultCubemapMemory{nullptr};
     vk::raii::ImageView _defaultCubemapView{nullptr};
-    vk::raii::Sampler _cubemapSampler{nullptr};
 
-    // TODO: Add real environment cubemap and IBL textures
-    // vk::raii::Image _environmentCubemap{nullptr};
-    // vk::raii::Image _iblIrradianceTexture{nullptr};
-    // vk::raii::Image _iblSpecularTexture{nullptr};
-    // vk::raii::Image _iblBrdfIntegrationLUT{nullptr};
+    vk::raii::Image _environmentTexture{nullptr};
+    vk::raii::DeviceMemory _environmentTextureMemory{nullptr};
+    vk::raii::ImageView _environmentTextureView{nullptr};
+    vk::raii::Image _iblIrradianceTexture{nullptr};
+    vk::raii::DeviceMemory _iblIrradianceTextureMemory{nullptr};
+    vk::raii::ImageView _iblIrradianceTextureView{nullptr};
+    vk::raii::Image _iblSpecularTexture{nullptr};
+    vk::raii::DeviceMemory _iblSpecularTextureMemory{nullptr};
+    vk::raii::ImageView _iblSpecularTextureView{nullptr};
+    vk::raii::Image _iblBrdfIntegrationLUT{nullptr};
+    vk::raii::DeviceMemory _iblBrdfIntegrationLUTMemory{nullptr};
+    vk::raii::ImageView _iblBrdfIntegrationLUTView{nullptr};
+    vk::raii::Sampler _environmentCubeSampler{nullptr};
+    vk::raii::Sampler _iblBrdfIntegrationLUTSampler{nullptr};
 
     // -------------------------------------------------------------------------
     // Model related data

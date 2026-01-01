@@ -1,0 +1,345 @@
+#version 450
+
+//=========================================================
+// This GLSL compute shader implements three separate compute passes for IBL:
+// 1) computeIrradiance: Generates diffuse irradiance for a cube map (Lambertian).
+// 2) computePrefilteredSpecular: Generates specular prefiltered environment map using GGX.
+// 3) computeLUT: Computes the BRDF integration LUT for specular IBL (A and B channels).
+//
+// The entry point is selected via specialization constant MODE.
+//=========================================================
+
+
+//=========================================================
+// Specialization Constants
+//=========================================================
+
+layout(constant_id = 0) const uint MODE = 0; // 0 = irradiance, 1 = specular, 2 = LUT
+
+
+//=========================================================
+// Uniforms & Bind Group Declarations
+//=========================================================
+
+// Set 0: Common parameters
+layout(set = 0, binding = 0) uniform sampler environmentSampler;
+layout(set = 0, binding = 1) uniform textureCube environmentTexture;
+layout(set = 0, binding = 2) uniform NumSamplesUniforms {
+    uint numSamples;
+};
+layout(set = 0, binding = 3, rgba16f) uniform image2DArray irradianceCube;
+layout(set = 0, binding = 4, rgba16f) uniform image2D brdfLut2D;
+
+// Set 1: Per-face parameters
+layout(set = 1, binding = 0) uniform PerFaceUniforms {
+    uint faceIndex;
+};
+
+// Set 2: Per-mip parameters
+layout(set = 2, binding = 0) uniform PerMipUniforms {
+    float roughness;
+};
+layout(set = 2, binding = 1, rgba16f) uniform image2DArray prefilteredSpecularCube;
+
+
+//=========================================================
+// Constants
+//=========================================================
+
+const float PI = 3.14159265359;
+
+
+//=========================================================
+// Utility Functions
+//=========================================================
+
+float saturate(float x) {
+    return clamp(x, 0.0, 1.0);
+}
+
+float radicalInverseVdC(uint bitsIn) {
+    uint bits = bitsIn;
+    bits = (bits << 16u) | (bits >> 16u);
+    bits = ((bits & 0x55555555u) << 1u) | ((bits & 0xAAAAAAAAu) >> 1u);
+    bits = ((bits & 0x33333333u) << 2u) | ((bits & 0xCCCCCCCCu) >> 2u);
+    bits = ((bits & 0x0F0F0F0Fu) << 4u) | ((bits & 0xF0F0F0F0u) >> 4u);
+    bits = ((bits & 0x00FF00FFu) << 8u) | ((bits & 0xFF00FF00u) >> 8u);
+    return float(bits) * 2.3283064365386963e-10;
+}
+
+vec2 hammersley2D(uint i, uint N) {
+    return vec2(float(i) / float(N), radicalInverseVdC(i));
+}
+
+
+//=========================================================
+// Coordinate System Helpers
+//=========================================================
+
+mat3 generateTBN(vec3 normal) {
+    vec3 bitangent = vec3(0.0, 1.0, 0.0);
+    float NdotUp = dot(normal, bitangent);
+    const float epsilon = 1e-7;
+
+    if (1.0 - abs(NdotUp) <= epsilon) {
+        if (NdotUp > 0.0) {
+            bitangent = vec3(0.0, 0.0, 1.0);
+        } else {
+            bitangent = vec3(0.0, 0.0, -1.0);
+        }
+    }
+
+    vec3 tangent = normalize(cross(bitangent, normal));
+    bitangent = cross(normal, tangent);
+
+    return mat3(tangent, bitangent, normal);
+}
+
+vec3 uvToDirection(vec2 uv, uint face) {
+
+    const vec3 faceDirs[6] = vec3[6](
+        vec3( 1.0,  0.0,  0.0), // +X
+        vec3(-1.0,  0.0,  0.0), // -X
+        vec3( 0.0,  1.0,  0.0), // +Y
+        vec3( 0.0, -1.0,  0.0), // -Y
+        vec3( 0.0,  0.0,  1.0), // +Z
+        vec3( 0.0,  0.0, -1.0)  // -Z
+    );
+
+    const vec3 upVectors[6] = vec3[6](
+        vec3( 0.0, -1.0,  0.0), // +X
+        vec3( 0.0, -1.0,  0.0), // -X
+        vec3( 0.0,  0.0,  1.0), // +Y
+        vec3( 0.0,  0.0, -1.0), // -Y
+        vec3( 0.0, -1.0,  0.0), // +Z
+        vec3( 0.0, -1.0,  0.0)  // -Z
+    );
+
+    const vec3 rightVectors[6] = vec3[6](
+        vec3( 0.0,  0.0, -1.0), // +X
+        vec3( 0.0,  0.0,  1.0), // -X
+        vec3( 1.0,  0.0,  0.0), // +Y
+        vec3( 1.0,  0.0,  0.0), // -Y
+        vec3( 1.0,  0.0,  0.0), // +Z
+        vec3(-1.0,  0.0,  0.0)  // -Z
+    );
+
+    float u = (uv.x * 2.0) - 1.0;
+    float v = (uv.y * 2.0) - 1.0;
+
+    return normalize(faceDirs[face] + (u * rightVectors[face]) + (v * upVectors[face]));
+}
+
+
+//=========================================================
+// Sampling Functions
+//=========================================================
+
+vec4 importanceSampleLambertian(uint sampleIndex, uint sampleCount, vec3 normal) {
+
+    vec2 xi = hammersley2D(sampleIndex, sampleCount);
+    
+    float phi = 2.0 * PI * xi.x;
+    float cosTheta = sqrt(1.0 - xi.y);
+    float sinTheta = sqrt(xi.y);
+
+    vec3 localDir = vec3(
+        sinTheta * cos(phi),
+        sinTheta * sin(phi),
+        cosTheta
+    );
+    
+    vec3 worldDir = normalize(generateTBN(normal) * localDir);
+
+    float pdf = cosTheta / PI;
+
+    return vec4(worldDir, pdf);
+}
+
+float dGGX(float NdotH, float alpha) {
+    float a = NdotH * alpha;
+    float k = alpha / (1.0 - NdotH*NdotH + a*a);
+    return (k * k) / PI;
+}
+
+float vSmithGGXCorrelated(float NdotV, float NdotL, float roughness) {
+    float a = roughness * roughness;
+    float a2 = a * a;
+    float GGXV = NdotL * sqrt(NdotV * NdotV * (1.0 - a2) + a2);
+    float GGXL = NdotV * sqrt(NdotL * NdotL * (1.0 - a2) + a2);
+    return 0.5 / (GGXV + GGXL);
+}
+
+vec4 importanceSampleGGX(uint sampleIndex, uint sampleCount, vec3 normal, float roughness) {
+
+    vec2 xi = hammersley2D(sampleIndex, sampleCount);
+
+    float alpha = roughness * roughness;
+    float cosTheta = saturate(sqrt((1.0 - xi.y) / (1.0 + ((alpha * alpha) - 1.0) * xi.y)));
+    float sinTheta = sqrt(max(0.0, 1.0 - cosTheta * cosTheta));
+    float phi = 2.0 * PI * xi.x;
+
+    vec3 localHalf = vec3(
+        sinTheta * cos(phi),
+        sinTheta * sin(phi),
+        cosTheta
+    );
+
+    mat3 tbn = generateTBN(normal);
+    vec3 halfVec = normalize(tbn * localHalf);
+
+    float pdf = dGGX(cosTheta, alpha) / 4.0;
+
+    return vec4(halfVec, pdf);
+}
+
+float computeLOD(float pdf, float faceSize) {
+    return 0.5 * log2((6.0 * faceSize * faceSize) / (float(numSamples) * pdf));
+}
+
+
+//=========================================================
+// Compute Shader Entry Points
+//=========================================================
+
+void computeIrradiance() {
+
+    ivec2 outputSize = imageSize(irradianceCube).xy;
+    if (gl_GlobalInvocationID.x >= outputSize.x || gl_GlobalInvocationID.y >= outputSize.y) { 
+        return; 
+    }
+
+    vec2 uv = vec2(float(gl_GlobalInvocationID.x) / float(outputSize.x), 
+                   float(gl_GlobalInvocationID.y) / float(outputSize.y));
+    vec3 normal = normalize(uvToDirection(uv, faceIndex));
+
+    vec3 irradiance = vec3(0.0);
+    float weightSum = 0.0;
+    
+    for (uint i = 0u; i < numSamples; i++) {
+
+        vec4 sampledDir = importanceSampleLambertian(i, numSamples, normal);
+        vec3 sampleDir = sampledDir.xyz;
+        float pdf = sampledDir.w;
+        
+        float lod = computeLOD(pdf, float(outputSize.x));
+        
+        vec3 sampleColor = textureLod(samplerCube(environmentTexture, environmentSampler), 
+                                      sampleDir, lod).rgb;
+
+        float weight = max(dot(normal, sampleDir), 0.0);
+        irradiance += sampleColor * weight;
+        weightSum += weight;
+    }
+
+    if (weightSum > 0.0) {
+        irradiance /= weightSum;
+    }
+
+    imageStore(irradianceCube, ivec3(gl_GlobalInvocationID.xy, int(faceIndex)), 
+               vec4(irradiance, 1.0));
+}
+
+void computePrefilteredSpecular() {
+
+    ivec2 outputSize = imageSize(prefilteredSpecularCube).xy;
+    if (gl_GlobalInvocationID.x >= outputSize.x || gl_GlobalInvocationID.y >= outputSize.y) { 
+        return; 
+    }
+
+    vec2 uv = vec2(float(gl_GlobalInvocationID.x) / float(outputSize.x), 
+                   float(gl_GlobalInvocationID.y) / float(outputSize.y));
+    vec3 N = normalize(uvToDirection(uv, faceIndex));
+
+    vec3 accumSpecular = vec3(0.0);
+    float weightSum = 0.0;
+    
+    for (uint i = 0u; i < numSamples; i++) {
+
+        vec4 sampledDir = importanceSampleGGX(i, numSamples, N, roughness);
+        vec3 H = sampledDir.xyz;
+        float pdf = sampledDir.w;
+        
+        vec3 V = N;
+        vec3 L = normalize(reflect(-V, H));
+        float NdotL = dot(N, L);
+
+        if (NdotL > 0.0) {
+            float lod = computeLOD(pdf, float(outputSize.x));
+
+            vec3 sampleColor = textureLod(samplerCube(environmentTexture, environmentSampler), 
+                                          L, lod).rgb;
+            
+            accumSpecular += sampleColor * NdotL;
+            weightSum += NdotL;
+        }
+    }
+
+    if (weightSum > 0.0) {
+        accumSpecular /= weightSum;
+    }
+
+    imageStore(prefilteredSpecularCube, ivec3(gl_GlobalInvocationID.xy, int(faceIndex)), 
+               vec4(accumSpecular, 1.0));
+}
+
+void computeLUT() {
+
+    ivec2 resolution = imageSize(brdfLut2D);
+    if (gl_GlobalInvocationID.x >= resolution.x || gl_GlobalInvocationID.y >= resolution.y) { 
+        return; 
+    }
+
+    const float eps = 1e-5;
+    const float minRough = 0.001;
+    float NdotV = clamp((float(gl_GlobalInvocationID.x) + 0.5) / float(resolution.x), eps, 1.0 - eps);
+    float roughness = clamp((float(gl_GlobalInvocationID.y) + 0.5) / float(resolution.y), minRough, 1.0 - eps);
+
+    vec3 V = vec3(sqrt(1.0 - NdotV * NdotV), 0.0, NdotV);
+    vec3 N = vec3(0.0, 0.0, 1.0);
+
+    float A = 0.0;
+    float B = 0.0;
+
+    for (uint i = 0u; i < numSamples; i++) {
+        vec4 sampledDir = importanceSampleGGX(i, numSamples, N, roughness);
+        vec3 H = sampledDir.xyz;
+        vec3 L = normalize(2.0 * dot(V, H) * H - V);
+
+        float NdotL = saturate(L.z);
+        float NdotH = saturate(H.z);
+        float VdotH = saturate(dot(V, H));
+
+        if (NdotL > 0.0) {  
+            float G = vSmithGGXCorrelated(NdotV, NdotL, roughness);
+            float Gv = (G * VdotH * NdotL) / NdotH;           
+            float Fc = pow(1.0 - VdotH, 5.0);
+
+            A += (1.0 - Fc) * Gv;
+            B += Fc * Gv;
+        }
+    }
+
+    const float scale = 4.0;
+    A = (A * scale) / float(numSamples);
+    B = (B * scale) / float(numSamples);
+
+    imageStore(brdfLut2D, ivec2(gl_GlobalInvocationID.xy), vec4(A, B, 0.0, 1.0));
+}
+
+
+//=========================================================
+// Main Entry Point
+//=========================================================
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+void main() {
+    if (MODE == 0u) {
+        computeIrradiance();
+    } else if (MODE == 1u) {
+        computePrefilteredSpecular();
+    } else if (MODE == 2u) {
+        computeLUT();
+    }
+}
+

@@ -77,8 +77,9 @@ std::vector<const char*> GetRequiredInstanceExtensions() {
 // Debug Messenger Callback
 
 VkBool32 DebugMessengerCallback(vk::DebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
-    [[maybe_unused]] vk::DebugUtilsMessageTypeFlagsEXT messageTypes,
-    const vk::DebugUtilsMessengerCallbackDataEXT* pCallbackData, [[maybe_unused]] void* pUserData) {
+                                [[maybe_unused]] vk::DebugUtilsMessageTypeFlagsEXT messageTypes,
+                                const vk::DebugUtilsMessengerCallbackDataEXT* pCallbackData,
+                                [[maybe_unused]] void* pUserData) {
     if (messageSeverity >= vk::DebugUtilsMessageSeverityFlagBitsEXT::eError) {
         VK_LOG_VALIDATION_ERROR(pCallbackData->pMessage);
     } else if (messageSeverity >= vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning) {
@@ -234,12 +235,12 @@ VulkanCore::VulkanCore(GLFWwindow* window) {
     }
 
     if (supportedVersion < kRequiredVersion) {
-        throw std::runtime_error(
-            "Vulkan version " + std::to_string(VK_API_VERSION_MAJOR(kRequiredVersion)) + "." +
-            std::to_string(VK_API_VERSION_MINOR(kRequiredVersion)) +
-            " required, but driver only supports " +
-            std::to_string(VK_API_VERSION_MAJOR(supportedVersion)) + "." +
-            std::to_string(VK_API_VERSION_MINOR(supportedVersion)) + ".");
+        throw std::runtime_error("Vulkan version " +
+                                 std::to_string(VK_API_VERSION_MAJOR(kRequiredVersion)) + "." +
+                                 std::to_string(VK_API_VERSION_MINOR(kRequiredVersion)) +
+                                 " required, but driver only supports " +
+                                 std::to_string(VK_API_VERSION_MAJOR(supportedVersion)) + "." +
+                                 std::to_string(VK_API_VERSION_MINOR(supportedVersion)) + ".");
     }
 
     //----------------------------------
@@ -347,16 +348,32 @@ VulkanCore::VulkanCore(GLFWwindow* window) {
     vk::PhysicalDeviceFeatures deviceFeatures{};
     deviceFeatures.samplerAnisotropy = VK_TRUE; // Enable anisotropic filtering for textures
 
+    // Query Vulkan 1.3 features to check availability.
+    auto availableFeatures =
+        _physicalDevice
+            .getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan13Features>();
+    auto& vulkan13Features = availableFeatures.get<vk::PhysicalDeviceVulkan13Features>();
+
+    // Enable shaderDemoteToHelperInvocation if supported (required for 'discard' in shaders).
+    vk::PhysicalDeviceVulkan13Features enabledVulkan13Features{};
+    if (vulkan13Features.shaderDemoteToHelperInvocation) {
+        enabledVulkan13Features.shaderDemoteToHelperInvocation = VK_TRUE;
+        VK_LOG_INFO("Enabling shaderDemoteToHelperInvocation feature.");
+    } else {
+        VK_LOG_WARNING("shaderDemoteToHelperInvocation not supported by device.");
+    }
+
     // Get required device extensions.
     auto deviceExtensions = GetRequiredDeviceExtensions();
 
-    // Create device create info.
+    // Create device create info with feature chain.
     vk::DeviceCreateInfo deviceCreateInfo{};
     deviceCreateInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
     deviceCreateInfo.pQueueCreateInfos = queueCreateInfos.data();
     deviceCreateInfo.pEnabledFeatures = &deviceFeatures;
     deviceCreateInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
     deviceCreateInfo.ppEnabledExtensionNames = deviceExtensions.data();
+    deviceCreateInfo.setPNext(&enabledVulkan13Features); // Chain Vulkan 1.3 features
 
     // Create the logical device.
     _device = vk::raii::Device(_physicalDevice, deviceCreateInfo);
@@ -419,8 +436,7 @@ const vk::raii::PhysicalDevice& VulkanCore::GetRaiiPhysicalDevice() const {
     return _physicalDevice;
 }
 
-uint32_t VulkanCore::FindMemoryType(uint32_t typeFilter,
-                                    vk::MemoryPropertyFlags properties) const {
+uint32_t VulkanCore::FindMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties) const {
     auto memProperties = _physicalDevice.getMemoryProperties();
 
     for (uint32_t i = 0; i < memProperties.memoryTypeCount; ++i) {

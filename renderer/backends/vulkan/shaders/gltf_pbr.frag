@@ -27,6 +27,14 @@ layout(set = 0, binding = 0) uniform GlobalUniforms {
     vec3 cameraPosition;
 } globals;
 
+// IBL textures (set 0, bindings 1-6)
+layout(set = 0, binding = 1) uniform sampler iblSampler;
+layout(set = 0, binding = 2) uniform textureCube environmentTexture;
+layout(set = 0, binding = 3) uniform textureCube iblIrradianceTexture;
+layout(set = 0, binding = 4) uniform textureCube iblSpecularTexture;
+layout(set = 0, binding = 5) uniform texture2D iblBRDFIntegrationLUTTexture;
+layout(set = 0, binding = 6) uniform sampler iblBRDFIntegrationLUTSampler;
+
 // Material uniforms (set 1, binding 0)
 layout(set = 1, binding = 0) uniform MaterialUniforms {
     vec4 baseColorFactor;
@@ -79,7 +87,7 @@ vec3 getNormal() {
 
     // Sample normal map and remap from [0,1] to [-1,1].
     vec3 sampledNormal = texture(sampler2D(normalTexture, textureSampler), inTexCoord0).xyz * 2.0 - 1.0;
-    sampledNormal.xy *= material.normalScale;
+    sampledNormal *= vec3(material.normalScale, material.normalScale, 1.0);
 
     // Transform to world space.
     return normalize(TBN * sampledNormal);
@@ -147,19 +155,66 @@ vec3 toneMapPBRNeutral(vec3 colorIn) {
     return mix(color, vec3(newPeak), g);
 }
 
-// Tone mapping with gamma correction.
+// Tone mapping.
 vec3 toneMap(vec3 colorIn) {
-    const float gamma = 2.2;
-    const float invGamma = 1.0 / gamma;
     const float exposure = 1.0;
 
     vec3 color = colorIn * exposure;
     color = toneMapPBRNeutral(color);
 
-    // Linear to sRGB.
-    color = pow(color, vec3(invGamma));
-
+    // No manual gamma correction - sRGB swapchain format handles it automatically.
     return color;
+}
+
+//=========================================================
+// IBL Functions
+//=========================================================
+
+// Sample prefiltered specular environment map at a given LOD.
+vec4 samplePrefilteredSpecularIBL(vec3 reflection, float lod) {
+    return textureLod(samplerCube(iblSpecularTexture, iblSampler), reflection, lod);
+}
+
+// Compute GGX prefiltered specular lighting from environment.
+vec3 getIBLRadianceGGX(vec3 n, vec3 v, float roughness) {
+    float NdotV = max(dot(n, v), 0.0);
+    
+    // Derive LOD based on roughness and total mip count.
+    float lod = roughness * (10.0 - 1.0);
+    
+    // Reflect view vector around normal.
+    vec3 reflection = normalize(reflect(-v, n));
+    
+    // Sample prefiltered environment.
+    vec4 specularSample = samplePrefilteredSpecularIBL(reflection, lod);
+    
+    return specularSample.rgb;
+}
+
+// Compute environment Fresnel reflectance using GGX BRDF LUT.
+vec3 getIBLGGXFresnel(vec3 n, vec3 v, float roughness, vec3 F0, float specularWeight) {
+    float NdotV = max(dot(n, v), 0.0);
+    
+    // Lookup coordinates for BRDF integration LUT.
+    vec2 brdfLUTCoords = vec2(NdotV, roughness);
+    
+    // Sample precomputed GGX LUT.
+    vec2 brdfLUT = texture(sampler2D(iblBRDFIntegrationLUTTexture, iblBRDFIntegrationLUTSampler), 
+                           brdfLUTCoords).rg;
+    
+    // Single-scattering Fresnel component (Fdez-Aguera approximation).
+    vec3 fresnelPivot = max(vec3(1.0 - roughness), F0) - F0;
+    vec3 fresnelSingleScatter = F0 + fresnelPivot * pow(1.0 - NdotV, 5.0);
+    
+    // Weighted single-scattering specular term.
+    vec3 FssEss = specularWeight * (fresnelSingleScatter * brdfLUT.x + brdfLUT.y);
+    
+    // Multiple-scattering Fresnel component.
+    float Ems = 1.0 - (brdfLUT.x + brdfLUT.y);
+    vec3 F_avg = specularWeight * (F0 + (1.0 - F0) / 21.0);
+    vec3 FmsEms = Ems * FssEss * F_avg / (1.0 - F_avg * Ems);
+    
+    return FssEss + FmsEms;
 }
 
 //=========================================================
@@ -170,7 +225,6 @@ void main() {
     // Sample textures.
     vec4 baseColor = texture(sampler2D(baseColorTexture, textureSampler), inTexCoord0);
     vec3 metallicRoughness = texture(sampler2D(metallicRoughnessTexture, textureSampler), inTexCoord0).rgb;
-    float occlusion = texture(sampler2D(occlusionTexture, textureSampler), inTexCoord0).r;
     vec3 emissive = texture(sampler2D(emissiveTexture, textureSampler), inTexCoord0).rgb;
 
     // Apply material factors.
@@ -178,7 +232,6 @@ void main() {
     float metallic = metallicRoughness.b * material.metallicFactor;
     float perceptualRoughness = metallicRoughness.g * material.roughnessFactor;
     float alphaRoughness = perceptualRoughness * perceptualRoughness;
-    occlusion = 1.0 + material.occlusionStrength * (occlusion - 1.0);
     emissive *= material.emissiveFactor;
 
     // Material properties for PBR.
@@ -194,40 +247,25 @@ void main() {
 
     vec3 color = vec3(0.0);
 
-    // Simple ambient lighting (placeholder for IBL).
+    // Environment lighting (IBL).
     {
-        float ambientStrength = 0.3;
-        vec3 ambient = ambientStrength * baseColor.rgb;
-        color += ambient;
-    }
+        // Sample irradiance texture for diffuse.
+        vec3 diffuseEnv = texture(samplerCube(iblIrradianceTexture, iblSampler), n).rgb;
+        vec3 iblDiffuse = diffuseEnv * baseColor.rgb;
 
-    // Direct lighting (simple directional light).
-    {
-        // Light from upper-right (typical key light position).
-        vec3 lightDir = normalize(vec3(1.0, 2.0, 1.0));
-        vec3 lightColor = vec3(1.0, 1.0, 0.95); // Slightly warm white
+        // Sample specular texture.
+        vec3 iblSpecular = getIBLRadianceGGX(n, v, perceptualRoughness);
+        vec3 fresnelDielectric = getIBLGGXFresnel(n, v, perceptualRoughness, f0_dielectric, specularWeight);
+        vec3 iblDielectric = mix(iblDiffuse, iblSpecular, fresnelDielectric);
+        vec3 fresnelMetal = getIBLGGXFresnel(n, v, perceptualRoughness, baseColor.rgb, 1.0);
+        vec3 iblMetal = fresnelMetal * iblSpecular;
 
-        vec3 l = lightDir;
-        vec3 h = normalize(l + v);
-
-        float nDotL = clampedDot(n, l);
-        float nDotV = clampedDot(n, v);
-        float nDotH = clampedDot(n, h);
-        float vDotH = clampedDot(v, h);
-
-        if (nDotL > 0.0 && nDotV > 0.0) {
-            // Diffuse contribution.
-            vec3 diffuse = brdfLambertian(f0, f90, cDiffuse, specularWeight, vDotH);
-
-            // Specular contribution.
-            vec3 specular = brdfSpecularGGX(f0, f90, alphaRoughness, specularWeight, vDotH, nDotL, nDotV, nDotH);
-
-            color += lightColor * nDotL * (diffuse + specular);
-        }
+        color += mix(iblDielectric, iblMetal, metallic);
     }
 
     // Apply ambient occlusion.
-    color *= occlusion;
+    float ao = texture(sampler2D(occlusionTexture, textureSampler), inTexCoord0).r;
+    color = color * (1.0 + material.occlusionStrength * (ao - 1.0));
 
     // Add emissive.
     color += emissive;

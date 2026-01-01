@@ -11,7 +11,8 @@ layout(set = 0, binding = 0) uniform GlobalUniforms {
     vec3 cameraPosition;
 } global;
 
-layout(set = 0, binding = 1) uniform samplerCube environmentMap;
+layout(set = 0, binding = 1) uniform sampler envSampler;
+layout(set = 0, binding = 2) uniform textureCube environmentMap;
 
 layout(location = 0) in vec2 inUV;
 layout(location = 0) out vec4 outColor;
@@ -50,15 +51,13 @@ void main() {
     mat3 invRotMatrix = mat3(global.inverseViewMatrix);
     dir = normalize(invRotMatrix * dir);
 
-    // Sample environment cubemap
-    vec3 color = texture(environmentMap, dir).rgb;
+    // Sample environment cubemap.
+    vec3 color = texture(samplerCube(environmentMap, envSampler), dir).rgb;
 
     // Tone mapping
     color = toneMapPBRNeutral(color);
 
-    // Linear to sRGB gamma correction
-    color = pow(color, vec3(1.0 / 2.2));
-
+    // No manual gamma correction - sRGB swapchain format handles it automatically
     outColor = vec4(color, 1.0);
 }
 

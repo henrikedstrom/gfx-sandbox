@@ -14,6 +14,10 @@ set(gfx_renderer_vulkan_sources
   VulkanConfig.h
   VulkanCore.cpp
   VulkanCore.h
+  VulkanEnvironmentPreprocessor.cpp
+  VulkanEnvironmentPreprocessor.h
+  VulkanPanoramaToCubemapConverter.cpp
+  VulkanPanoramaToCubemapConverter.h
   VulkanRenderer.cpp
   VulkanRenderer.h
   VulkanShaderUtils.cpp

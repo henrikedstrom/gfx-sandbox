@@ -3,7 +3,6 @@
 
 // Standard Library Headers
 #include <array>
-#include <bit>
 #include <cstring>
 #include <filesystem>
 #include <memory>
@@ -15,8 +14,12 @@
 
 // Project Headers
 #include "BackendRegistry.h"
+#include "Environment.h"
 #include "Model.h"
+#include "TextureUtils.h"
 #include "VulkanCore.h"
+#include "VulkanEnvironmentPreprocessor.h"
+#include "VulkanPanoramaToCubemapConverter.h"
 #include "VulkanShaderUtils.h"
 #include "VulkanSwapchain.h"
 
@@ -32,6 +35,57 @@ static bool s_registered = [] {
 // Internal Texture Utilities
 
 namespace {
+
+constexpr uint32_t kIrradianceMapSize = 64;
+constexpr uint32_t kPrecomputedSpecularMapSize = 512;
+constexpr uint32_t kBRDFIntegrationLUTMapSize = 128;
+
+/// @brief Creates an environment texture (2D or cubemap) with optional mipmapping.
+void CreateEnvironmentTexture(VulkanCore& core, bool isCubemap, uint32_t width, uint32_t height,
+                              uint32_t layerCount, bool mipmapping, vk::raii::Image& image,
+                              vk::raii::DeviceMemory& imageMemory, vk::raii::ImageView& imageView) {
+    const uint32_t mipLevels = mipmapping ? TextureUtils::CalcMipLevels(width, height) : 1;
+
+    vk::ImageCreateInfo imageInfo{};
+    imageInfo.imageType = vk::ImageType::e2D;
+    imageInfo.extent.width = width;
+    imageInfo.extent.height = height;
+    imageInfo.extent.depth = 1;
+    imageInfo.mipLevels = mipLevels;
+    imageInfo.arrayLayers = layerCount;
+    imageInfo.format = vk::Format::eR16G16B16A16Sfloat;
+    imageInfo.tiling = vk::ImageTiling::eOptimal;
+    imageInfo.initialLayout = vk::ImageLayout::eUndefined;
+    imageInfo.usage = vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eTransferSrc |
+                      vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eStorage;
+    imageInfo.samples = vk::SampleCountFlagBits::e1;
+    imageInfo.sharingMode = vk::SharingMode::eExclusive;
+    imageInfo.flags = isCubemap ? vk::ImageCreateFlagBits::eCubeCompatible : vk::ImageCreateFlags{};
+
+    image = core.GetRaiiDevice().createImage(imageInfo);
+
+    vk::MemoryRequirements memRequirements = image.getMemoryRequirements();
+
+    vk::MemoryAllocateInfo allocInfo{};
+    allocInfo.allocationSize = memRequirements.size;
+    allocInfo.memoryTypeIndex = core.FindMemoryType(memRequirements.memoryTypeBits,
+                                                    vk::MemoryPropertyFlagBits::eDeviceLocal);
+
+    imageMemory = core.GetRaiiDevice().allocateMemory(allocInfo);
+    image.bindMemory(*imageMemory, 0);
+
+    vk::ImageViewCreateInfo viewInfo{};
+    viewInfo.image = *image;
+    viewInfo.viewType = isCubemap ? vk::ImageViewType::eCube : vk::ImageViewType::e2D;
+    viewInfo.format = vk::Format::eR16G16B16A16Sfloat;
+    viewInfo.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+    viewInfo.subresourceRange.baseMipLevel = 0;
+    viewInfo.subresourceRange.levelCount = mipLevels;
+    viewInfo.subresourceRange.baseArrayLayer = 0;
+    viewInfo.subresourceRange.layerCount = layerCount;
+
+    imageView = core.GetRaiiDevice().createImageView(viewInfo);
+}
 
 /// @brief Creates a Vulkan image and allocates device memory for it.
 void CreateImage(VulkanCore& core, uint32_t width, uint32_t height, uint32_t mipLevels,
@@ -118,21 +172,25 @@ void TransitionImageLayout(VulkanCore& core, vk::raii::CommandPool& commandPool,
 
     cmd.end();
 
+    // Submit command buffer.
     vk::SubmitInfo submitInfo{};
     vk::CommandBuffer cmdBuf = *cmd;
     submitInfo.commandBufferCount = 1;
     submitInfo.pCommandBuffers = &cmdBuf;
 
     core.GetGraphicsQueue().submit(submitInfo);
+
+    // Wait for GPU to finish before command buffer is freed.
     core.GetDevice().waitIdle();
 }
 
 /// @brief Generates mipmaps for an image using vkCmdBlitImage.
 void GenerateMipmaps(VulkanCore& core, vk::raii::CommandPool& commandPool, vk::Image image,
-                     vk::Format format, uint32_t width, uint32_t height, uint32_t mipLevels) {
+                     vk::Format format, uint32_t width, uint32_t height, uint32_t arrayLayers,
+                     uint32_t mipLevels) {
+
     // Ensure texture format supports blit operations.
     vk::FormatProperties formatProperties = core.GetPhysicalDevice().getFormatProperties(format);
-
     if (!(formatProperties.optimalTilingFeatures & vk::FormatFeatureFlagBits::eBlitSrc) ||
         !(formatProperties.optimalTilingFeatures & vk::FormatFeatureFlagBits::eBlitDst)) {
         throw std::runtime_error("Texture format does not support blit source and destination.");
@@ -156,7 +214,7 @@ void GenerateMipmaps(VulkanCore& core, vk::raii::CommandPool& commandPool, vk::I
     barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     barrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
     barrier.subresourceRange.baseArrayLayer = 0;
-    barrier.subresourceRange.layerCount = 1;
+    barrier.subresourceRange.layerCount = arrayLayers;
     barrier.subresourceRange.levelCount = 1;
 
     // Generate mip chain by blitting from each level to the next.
@@ -180,14 +238,14 @@ void GenerateMipmaps(VulkanCore& core, vk::raii::CommandPool& commandPool, vk::I
         blit.srcSubresource.aspectMask = vk::ImageAspectFlagBits::eColor;
         blit.srcSubresource.mipLevel = i - 1;
         blit.srcSubresource.baseArrayLayer = 0;
-        blit.srcSubresource.layerCount = 1;
+        blit.srcSubresource.layerCount = arrayLayers;
         blit.dstOffsets[0] = vk::Offset3D{0, 0, 0};
         blit.dstOffsets[1] = vk::Offset3D{std::max(static_cast<int32_t>(width >> i), 1),
                                           std::max(static_cast<int32_t>(height >> i), 1), 1};
         blit.dstSubresource.aspectMask = vk::ImageAspectFlagBits::eColor;
         blit.dstSubresource.mipLevel = i;
         blit.dstSubresource.baseArrayLayer = 0;
-        blit.dstSubresource.layerCount = 1;
+        blit.dstSubresource.layerCount = arrayLayers;
 
         cmd.blitImage(image, vk::ImageLayout::eTransferSrcOptimal, image,
                       vk::ImageLayout::eTransferDstOptimal, blit, vk::Filter::eLinear);
@@ -216,12 +274,15 @@ void GenerateMipmaps(VulkanCore& core, vk::raii::CommandPool& commandPool, vk::I
 
     cmd.end();
 
+    // Submit command buffer.
     vk::SubmitInfo submitInfo{};
     vk::CommandBuffer cmdBuf = *cmd;
     submitInfo.commandBufferCount = 1;
     submitInfo.pCommandBuffers = &cmdBuf;
 
     core.GetGraphicsQueue().submit(submitInfo);
+
+    // Wait for GPU to finish before command buffer is freed.
     core.GetDevice().waitIdle();
 }
 
@@ -277,7 +338,7 @@ void CreateTextureFromModel(VulkanCore& core, vk::raii::CommandPool& commandPool
     const uint32_t width = texture->_width;
     const uint32_t height = texture->_height;
     const vk::DeviceSize imageSize = texture->_data.size();
-    const uint32_t mipLevels = std::bit_width(std::max(width, height));
+    const uint32_t mipLevels = TextureUtils::CalcMipLevels(width, height);
 
     // Create staging buffer.
     vk::raii::Buffer stagingBuffer{nullptr};
@@ -306,7 +367,7 @@ void CreateTextureFromModel(VulkanCore& core, vk::raii::CommandPool& commandPool
     CopyBufferToImage(core, commandPool, *stagingBuffer, *image, width, height);
 
     // Generate mipmaps (transitions to shader read only).
-    GenerateMipmaps(core, commandPool, *image, format, width, height, mipLevels);
+    GenerateMipmaps(core, commandPool, *image, format, width, height, 1, mipLevels);
 
     // Create image view.
     vk::ImageViewCreateInfo viewInfo{};
@@ -342,13 +403,13 @@ VulkanRenderer::VulkanRenderer(GLFWwindow* window) : _window(window) {
     CreateUniformBuffers();
     CreateDefaultCubemap();
     CreateDefaultTextures();
-    CreateModelSampler();
+    CreateSamplers();
 
     // Descriptor setup
     CreateGlobalDescriptorSetLayout();
     CreateModelDescriptorSetLayout();
     CreateDescriptorPool();
-    CreateDescriptorSets();
+    CreateGlobalDescriptorSets();
 
     // Pipelines
     CreateEnvironmentPipelineLayout();
@@ -656,8 +717,19 @@ void VulkanRenderer::SetModel(const Model& model) {
                 _transparentMeshes.size(), _materials.size(), _indexCount);
 }
 
-void VulkanRenderer::SetEnvironment([[maybe_unused]] const Environment& environment) {
-    // Not yet implemented.
+void VulkanRenderer::SetEnvironment(const Environment& environment) {
+    // Clean up old textures.
+    _environmentTexture = nullptr;
+    _environmentTextureView = nullptr;
+    _iblIrradianceTexture = nullptr;
+    _iblIrradianceTextureView = nullptr;
+    _iblSpecularTexture = nullptr;
+    _iblSpecularTextureView = nullptr;
+    _iblBrdfIntegrationLUT = nullptr;
+    _iblBrdfIntegrationLUTView = nullptr;
+
+    CreateEnvironmentTextures(environment);
+    CreateGlobalDescriptorSets();
 }
 
 // -------------------------------------------------------------------------
@@ -886,24 +958,49 @@ void VulkanRenderer::CreateUniformBuffers() {
 }
 
 void VulkanRenderer::CreateGlobalDescriptorSetLayout() {
+
+    std::array<vk::DescriptorSetLayoutBinding, 7> bindings{};
     // Binding 0: GlobalUniforms uniform buffer.
-    vk::DescriptorSetLayoutBinding uboLayoutBinding{};
-    uboLayoutBinding.binding = 0;
-    uboLayoutBinding.descriptorType = vk::DescriptorType::eUniformBuffer;
-    uboLayoutBinding.descriptorCount = 1;
-    uboLayoutBinding.stageFlags =
-        vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment;
-    uboLayoutBinding.pImmutableSamplers = nullptr;
+    bindings[0].binding = 0;
+    bindings[0].descriptorType = vk::DescriptorType::eUniformBuffer;
+    bindings[0].descriptorCount = 1;
+    bindings[0].stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment;
 
-    // Binding 1: Environment cubemap sampler (placeholder for now).
-    vk::DescriptorSetLayoutBinding samplerLayoutBinding{};
-    samplerLayoutBinding.binding = 1;
-    samplerLayoutBinding.descriptorType = vk::DescriptorType::eCombinedImageSampler;
-    samplerLayoutBinding.descriptorCount = 1;
-    samplerLayoutBinding.stageFlags = vk::ShaderStageFlagBits::eFragment;
-    samplerLayoutBinding.pImmutableSamplers = nullptr;
+    // Binding 1: Environment cubemap sampler.
+    bindings[1].binding = 1;
+    bindings[1].descriptorType = vk::DescriptorType::eSampler;
+    bindings[1].descriptorCount = 1;
+    bindings[1].stageFlags = vk::ShaderStageFlagBits::eFragment;
 
-    std::array bindings = {uboLayoutBinding, samplerLayoutBinding};
+    // Binding 2: Environment texture.
+    bindings[2].binding = 2;
+    bindings[2].descriptorType = vk::DescriptorType::eSampledImage;
+    bindings[2].descriptorCount = 1;
+    bindings[2].stageFlags = vk::ShaderStageFlagBits::eFragment;
+
+    // Binding 3: IBL irradiance texture.
+    bindings[3].binding = 3;
+    bindings[3].descriptorType = vk::DescriptorType::eSampledImage;
+    bindings[3].descriptorCount = 1;
+    bindings[3].stageFlags = vk::ShaderStageFlagBits::eFragment;
+
+    // Binding 4: IBL specular texture.
+    bindings[4].binding = 4;
+    bindings[4].descriptorType = vk::DescriptorType::eSampledImage;
+    bindings[4].descriptorCount = 1;
+    bindings[4].stageFlags = vk::ShaderStageFlagBits::eFragment;
+
+    // Binding 5: IBL LUT texture.
+    bindings[5].binding = 5;
+    bindings[5].descriptorType = vk::DescriptorType::eSampledImage;
+    bindings[5].descriptorCount = 1;
+    bindings[5].stageFlags = vk::ShaderStageFlagBits::eFragment;
+
+    // Binding 6: IBL LUT sampler.
+    bindings[6].binding = 6;
+    bindings[6].descriptorType = vk::DescriptorType::eSampler;
+    bindings[6].descriptorCount = 1;
+    bindings[6].stageFlags = vk::ShaderStageFlagBits::eFragment;
 
     vk::DescriptorSetLayoutCreateInfo layoutInfo{};
     layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
@@ -919,30 +1016,27 @@ void VulkanRenderer::CreateDescriptorPool() {
     _descriptorPools.emplace_back();
     auto& poolInfo = _descriptorPools.back();
 
-    std::array<vk::DescriptorPoolSize, 4> poolSizes{};
+    std::array<vk::DescriptorPoolSize, 3> poolSizes{};
 
-    // Uniform buffers (global + per-material).
+    // Uniform buffers: one per descriptor set.
     poolSizes[0].type = vk::DescriptorType::eUniformBuffer;
-    poolSizes[0].descriptorCount =
-        vkbackend::kMaxFramesInFlight + DescriptorPoolInfo::kMaxSetsPerPool;
+    poolSizes[0].descriptorCount = DescriptorPoolInfo::kMaxSetsPerPool;
 
-    // Combined image samplers (for environment cubemap in global set).
-    poolSizes[1].type = vk::DescriptorType::eCombinedImageSampler;
-    poolSizes[1].descriptorCount = vkbackend::kMaxFramesInFlight;
+    // Samplers: conservative over-provisioning (current max: 2 per set).
+    // TODO: Calculate dynamically based on actual descriptor set layouts.
+    poolSizes[1].type = vk::DescriptorType::eSampler;
+    poolSizes[1].descriptorCount = DescriptorPoolInfo::kMaxSetsPerPool * 8;
 
-    // Samplers (for material textures).
-    poolSizes[2].type = vk::DescriptorType::eSampler;
-    poolSizes[2].descriptorCount = DescriptorPoolInfo::kMaxSetsPerPool;
-
-    // Sampled images (5 textures per material).
-    poolSizes[3].type = vk::DescriptorType::eSampledImage;
-    poolSizes[3].descriptorCount = DescriptorPoolInfo::kMaxSetsPerPool * 5;
+    // Sampled images: conservative over-provisioning (current max: 5 per set).
+    // TODO: Calculate dynamically based on actual descriptor set layouts.
+    poolSizes[2].type = vk::DescriptorType::eSampledImage;
+    poolSizes[2].descriptorCount = DescriptorPoolInfo::kMaxSetsPerPool * 16;
 
     vk::DescriptorPoolCreateInfo createInfo{};
     createInfo.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
     createInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
     createInfo.pPoolSizes = poolSizes.data();
-    createInfo.maxSets = vkbackend::kMaxFramesInFlight + DescriptorPoolInfo::kMaxSetsPerPool;
+    createInfo.maxSets = DescriptorPoolInfo::kMaxSetsPerPool;
 
     poolInfo.pool = _core->GetRaiiDevice().createDescriptorPool(createInfo);
     poolInfo.allocatedSets = 0;
@@ -998,7 +1092,7 @@ vk::raii::DescriptorPool& VulkanRenderer::GetOrCreateDescriptorPool() {
     return newPoolInfo.pool;
 }
 
-void VulkanRenderer::CreateDescriptorSets() {
+void VulkanRenderer::CreateGlobalDescriptorSets() {
     // Create one descriptor set per frame in flight from the pool chain.
     _globalDescriptorSets.clear();
 
@@ -1014,7 +1108,7 @@ void VulkanRenderer::CreateDescriptorSets() {
         _globalDescriptorSets.push_back(std::move(sets[0]));
     }
 
-    // Update each descriptor set to point to its uniform buffer and cubemap.
+    // Update each descriptor set to point to its uniform buffer, samplers, and textures.
     for (uint32_t i = 0; i < vkbackend::kMaxFramesInFlight; ++i) {
         // Binding 0: Uniform buffer.
         vk::DescriptorBufferInfo bufferInfo{};
@@ -1022,14 +1116,35 @@ void VulkanRenderer::CreateDescriptorSets() {
         bufferInfo.offset = 0;
         bufferInfo.range = sizeof(GlobalUniforms);
 
-        // Binding 1: Cubemap sampler.
-        vk::DescriptorImageInfo imageInfo{};
-        imageInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
-        imageInfo.imageView = *_defaultCubemapView;
-        imageInfo.sampler = *_cubemapSampler;
+        // Binding 1: Environment cubemap sampler.
+        vk::DescriptorImageInfo samplerInfo{};
+        samplerInfo.sampler = *_environmentCubeSampler;
 
-        std::array<vk::WriteDescriptorSet, 2> descriptorWrites{};
+        // Bindings 2-5: Texture image views.
+        std::array<vk::DescriptorImageInfo, 4> imageInfos{};
+        imageInfos[0].imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+        imageInfos[0].imageView =
+            *_environmentTextureView ? *_environmentTextureView : *_defaultCubemapView;
 
+        imageInfos[1].imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+        imageInfos[1].imageView =
+            *_iblIrradianceTextureView ? *_iblIrradianceTextureView : *_defaultCubemapView;
+
+        imageInfos[2].imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+        imageInfos[2].imageView =
+            *_iblSpecularTextureView ? *_iblSpecularTextureView : *_defaultCubemapView;
+
+        imageInfos[3].imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+        imageInfos[3].imageView =
+            *_iblBrdfIntegrationLUTView ? *_iblBrdfIntegrationLUTView : *_defaultCubemapView;
+
+        // Binding 6: IBL LUT sampler.
+        vk::DescriptorImageInfo lutSamplerInfo{};
+        lutSamplerInfo.sampler = *_iblBrdfIntegrationLUTSampler;
+
+        std::array<vk::WriteDescriptorSet, 7> descriptorWrites{};
+
+        // Binding 0: Uniform buffer
         descriptorWrites[0].dstSet = *_globalDescriptorSets[i];
         descriptorWrites[0].dstBinding = 0;
         descriptorWrites[0].dstArrayElement = 0;
@@ -1037,12 +1152,31 @@ void VulkanRenderer::CreateDescriptorSets() {
         descriptorWrites[0].descriptorCount = 1;
         descriptorWrites[0].pBufferInfo = &bufferInfo;
 
+        // Binding 1: Environment cubemap sampler
         descriptorWrites[1].dstSet = *_globalDescriptorSets[i];
         descriptorWrites[1].dstBinding = 1;
         descriptorWrites[1].dstArrayElement = 0;
-        descriptorWrites[1].descriptorType = vk::DescriptorType::eCombinedImageSampler;
+        descriptorWrites[1].descriptorType = vk::DescriptorType::eSampler;
         descriptorWrites[1].descriptorCount = 1;
-        descriptorWrites[1].pImageInfo = &imageInfo;
+        descriptorWrites[1].pImageInfo = &samplerInfo;
+
+        // Bindings 2-5: Texture images
+        for (uint32_t t = 0; t < 4; ++t) {
+            descriptorWrites[2 + t].dstSet = *_globalDescriptorSets[i];
+            descriptorWrites[2 + t].dstBinding = 2 + t;
+            descriptorWrites[2 + t].dstArrayElement = 0;
+            descriptorWrites[2 + t].descriptorType = vk::DescriptorType::eSampledImage;
+            descriptorWrites[2 + t].descriptorCount = 1;
+            descriptorWrites[2 + t].pImageInfo = &imageInfos[t];
+        }
+
+        // Binding 6: IBL LUT sampler
+        descriptorWrites[6].dstSet = *_globalDescriptorSets[i];
+        descriptorWrites[6].dstBinding = 6;
+        descriptorWrites[6].dstArrayElement = 0;
+        descriptorWrites[6].descriptorType = vk::DescriptorType::eSampler;
+        descriptorWrites[6].descriptorCount = 1;
+        descriptorWrites[6].pImageInfo = &lutSamplerInfo;
 
         _core->GetDevice().updateDescriptorSets(descriptorWrites, nullptr);
     }
@@ -1211,25 +1345,6 @@ void VulkanRenderer::CreateDefaultCubemap() {
 
     _defaultCubemapView = device.createImageView(viewInfo);
 
-    // Create sampler.
-    vk::SamplerCreateInfo samplerInfo{};
-    samplerInfo.magFilter = vk::Filter::eLinear;
-    samplerInfo.minFilter = vk::Filter::eLinear;
-    samplerInfo.addressModeU = vk::SamplerAddressMode::eClampToEdge;
-    samplerInfo.addressModeV = vk::SamplerAddressMode::eClampToEdge;
-    samplerInfo.addressModeW = vk::SamplerAddressMode::eClampToEdge;
-    samplerInfo.anisotropyEnable = VK_FALSE;
-    samplerInfo.maxAnisotropy = 1.0f;
-    samplerInfo.borderColor = vk::BorderColor::eIntOpaqueBlack;
-    samplerInfo.unnormalizedCoordinates = VK_FALSE;
-    samplerInfo.compareEnable = VK_FALSE;
-    samplerInfo.mipmapMode = vk::SamplerMipmapMode::eLinear;
-    samplerInfo.mipLodBias = 0.0f;
-    samplerInfo.minLod = 0.0f;
-    samplerInfo.maxLod = 0.0f;
-
-    _cubemapSampler = device.createSampler(samplerInfo);
-
     // Clear and transition image layout using a one-time command buffer.
     vk::CommandBufferAllocateInfo cmdAllocInfo{};
     cmdAllocInfo.level = vk::CommandBufferLevel::ePrimary;
@@ -1295,6 +1410,60 @@ void VulkanRenderer::CreateDefaultCubemap() {
     _core->GetDevice().waitIdle();
 
     VK_LOG_INFO("Default cubemap created ({}x{} per face).", size, size);
+}
+
+void VulkanRenderer::CreateEnvironmentTextures(const Environment& environment) {
+    const Environment::Texture& panoramaTexture = environment.GetTexture();
+    uint32_t environmentCubeSize = TextureUtils::FloorPow2(panoramaTexture._width);
+
+    // Create IBL textures.
+    CreateEnvironmentTexture(*_core, true, environmentCubeSize, environmentCubeSize, 6, true,
+                             _environmentTexture, _environmentTextureMemory,
+                             _environmentTextureView);
+    CreateEnvironmentTexture(*_core, true, kIrradianceMapSize, kIrradianceMapSize, 6, true,
+                             _iblIrradianceTexture, _iblIrradianceTextureMemory,
+                             _iblIrradianceTextureView);
+    CreateEnvironmentTexture(*_core, true, kPrecomputedSpecularMapSize, kPrecomputedSpecularMapSize,
+                             6, true, _iblSpecularTexture, _iblSpecularTextureMemory,
+                             _iblSpecularTextureView);
+    CreateEnvironmentTexture(*_core, false, kBRDFIntegrationLUTMapSize, kBRDFIntegrationLUTMapSize,
+                             1, false, _iblBrdfIntegrationLUT, _iblBrdfIntegrationLUTMemory,
+                             _iblBrdfIntegrationLUTView);
+
+    // Upload panorama texture and convert to cubemap.
+    {
+        VulkanPanoramaToCubemapConverter converter(*_core, _commandPool);
+        converter.UploadAndConvert(panoramaTexture, *_environmentTexture, environmentCubeSize);
+    }
+
+    // Generate mipmaps for environment texture.
+    const uint32_t envMipLevels =
+        TextureUtils::CalcMipLevels(environmentCubeSize, environmentCubeSize);
+    GenerateMipmaps(*_core, _commandPool, *_environmentTexture, vk::Format::eR16G16B16A16Sfloat,
+                    environmentCubeSize, environmentCubeSize, 6, envMipLevels);
+
+    // Precompute IBL maps (irradiance, specular, and BRDF LUT).
+    {
+        VulkanEnvironmentPreprocessor preprocessor(*_core, _commandPool);
+        const uint32_t specularMipLevels =
+            TextureUtils::CalcMipLevels(kPrecomputedSpecularMapSize, kPrecomputedSpecularMapSize);
+        preprocessor.GenerateMaps(*_environmentTexture, *_iblIrradianceTexture, kIrradianceMapSize,
+                                  *_iblSpecularTexture, kPrecomputedSpecularMapSize,
+                                  specularMipLevels, *_iblBrdfIntegrationLUT,
+                                  kBRDFIntegrationLUTMapSize);
+    }
+
+    // Generate mipmaps for irradiance texture.
+    const uint32_t irradianceMipLevels =
+        TextureUtils::CalcMipLevels(kIrradianceMapSize, kIrradianceMapSize);
+    GenerateMipmaps(*_core, _commandPool, *_iblIrradianceTexture, vk::Format::eR16G16B16A16Sfloat,
+                    kIrradianceMapSize, kIrradianceMapSize, 6, irradianceMipLevels);
+
+    VK_LOG_INFO("IBL textures created (environment: {}x{}, irradiance: {}x{}, specular: {}x{}, "
+                "LUT: {}x{}).",
+                environmentCubeSize, environmentCubeSize, kIrradianceMapSize, kIrradianceMapSize,
+                kPrecomputedSpecularMapSize, kPrecomputedSpecularMapSize,
+                kBRDFIntegrationLUTMapSize, kBRDFIntegrationLUTMapSize);
 }
 
 // -------------------------------------------------------------------------
@@ -1447,27 +1616,64 @@ void VulkanRenderer::CreateDefaultTextures() {
     VK_LOG_INFO("Default textures created.");
 }
 
-void VulkanRenderer::CreateModelSampler() {
-    vk::SamplerCreateInfo samplerInfo{};
-    samplerInfo.magFilter = vk::Filter::eLinear;
-    samplerInfo.minFilter = vk::Filter::eLinear;
-    samplerInfo.addressModeU = vk::SamplerAddressMode::eRepeat;
-    samplerInfo.addressModeV = vk::SamplerAddressMode::eRepeat;
-    samplerInfo.addressModeW = vk::SamplerAddressMode::eRepeat;
-    samplerInfo.anisotropyEnable = VK_TRUE;
-    samplerInfo.maxAnisotropy = 16.0f;
-    samplerInfo.borderColor = vk::BorderColor::eIntOpaqueBlack;
-    samplerInfo.unnormalizedCoordinates = VK_FALSE;
-    samplerInfo.compareEnable = VK_FALSE;
-    samplerInfo.compareOp = vk::CompareOp::eAlways;
-    samplerInfo.mipmapMode = vk::SamplerMipmapMode::eLinear;
-    samplerInfo.mipLodBias = 0.0f;
-    samplerInfo.minLod = 0.0f;
-    samplerInfo.maxLod = VK_LOD_CLAMP_NONE;
+void VulkanRenderer::CreateSamplers() {
+    const auto& device = _core->GetRaiiDevice();
 
-    _modelTextureSampler = _core->GetRaiiDevice().createSampler(samplerInfo);
+    // Model texture sampler (with anisotropic filtering and mipmapping).
+    {
+        vk::SamplerCreateInfo samplerInfo{};
+        samplerInfo.magFilter = vk::Filter::eLinear;
+        samplerInfo.minFilter = vk::Filter::eLinear;
+        samplerInfo.mipmapMode = vk::SamplerMipmapMode::eLinear;
+        samplerInfo.addressModeU = vk::SamplerAddressMode::eRepeat;
+        samplerInfo.addressModeV = vk::SamplerAddressMode::eRepeat;
+        samplerInfo.addressModeW = vk::SamplerAddressMode::eRepeat;
+        samplerInfo.minLod = 0.0f;
+        samplerInfo.maxLod = VK_LOD_CLAMP_NONE;
+        samplerInfo.anisotropyEnable = VK_TRUE;
+        samplerInfo.maxAnisotropy = 16.0f;
+        samplerInfo.borderColor = vk::BorderColor::eIntOpaqueBlack;
+        samplerInfo.unnormalizedCoordinates = VK_FALSE;
+        samplerInfo.compareEnable = VK_FALSE;
+        samplerInfo.compareOp = vk::CompareOp::eAlways;
+        samplerInfo.mipLodBias = 0.0f;
 
-    VK_LOG_INFO("Model texture sampler created.");
+        _modelTextureSampler = device.createSampler(samplerInfo);
+    }
+
+    // Environment cubemap sampler (for default cubemap and all IBL cubemaps).
+    {
+        vk::SamplerCreateInfo samplerInfo{};
+        samplerInfo.magFilter = vk::Filter::eLinear;
+        samplerInfo.minFilter = vk::Filter::eLinear;
+        samplerInfo.mipmapMode = vk::SamplerMipmapMode::eLinear;
+        samplerInfo.addressModeU = vk::SamplerAddressMode::eClampToEdge;
+        samplerInfo.addressModeV = vk::SamplerAddressMode::eClampToEdge;
+        samplerInfo.addressModeW = vk::SamplerAddressMode::eClampToEdge;
+        samplerInfo.minLod = 0.0f;
+        samplerInfo.maxLod = VK_LOD_CLAMP_NONE;
+        samplerInfo.anisotropyEnable = VK_FALSE;
+
+        _environmentCubeSampler = device.createSampler(samplerInfo);
+    }
+
+    // IBL BRDF LUT sampler (no mipmapping).
+    {
+        vk::SamplerCreateInfo samplerInfo{};
+        samplerInfo.magFilter = vk::Filter::eLinear;
+        samplerInfo.minFilter = vk::Filter::eLinear;
+        samplerInfo.mipmapMode = vk::SamplerMipmapMode::eNearest;
+        samplerInfo.addressModeU = vk::SamplerAddressMode::eClampToEdge;
+        samplerInfo.addressModeV = vk::SamplerAddressMode::eClampToEdge;
+        samplerInfo.addressModeW = vk::SamplerAddressMode::eClampToEdge;
+        samplerInfo.minLod = 0.0f;
+        samplerInfo.maxLod = 0.0f;
+        samplerInfo.anisotropyEnable = VK_FALSE;
+
+        _iblBrdfIntegrationLUTSampler = device.createSampler(samplerInfo);
+    }
+
+    VK_LOG_INFO("Samplers created (model, environment cube, BRDF LUT).");
 }
 
 void VulkanRenderer::CreateVertexBuffer(const Model& model) {
