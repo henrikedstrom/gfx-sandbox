@@ -106,7 +106,7 @@ fn getNormal(in: VertexOutput) -> vec3f {
 
     // Sample the normal map and remap from [0,1] to [-1,1]
     var sampledNormal = textureSample(normalTexture, textureSampler, in.texCoord0).xyz  * 2.0 - 1.0;
-    sampledNormal *= materialUniforms.normalScale; 
+    sampledNormal *= vec3f(materialUniforms.normalScale, materialUniforms.normalScale, 1.0); 
 
     // Compute the final normal in world space
     return normalize(TBN * sampledNormal);
@@ -293,10 +293,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {
     materialInfo.perceptualRoughness = metallicRoughness.g * materialUniforms.roughnessFactor;
     materialInfo.f0_dielectric = vec3f(0.04);
     materialInfo.specularWeight = 1.0;
-    materialInfo.alphaRoughness = metallicRoughness.g * metallicRoughness.g;
+    materialInfo.alphaRoughness = materialInfo.perceptualRoughness * materialInfo.perceptualRoughness;
     materialInfo.f0 = mix(vec3f(0.04), materialInfo.baseColor.rgb, materialInfo.metallic);
     materialInfo.f90 = vec3f(1.0);
-    materialInfo.cDiffuse = mix(materialInfo.baseColor.rgb * 0.5, vec3f(0.0), materialInfo.metallic);
+    materialInfo.cDiffuse = mix(materialInfo.baseColor.rgb, vec3f(0.0), materialInfo.metallic);
     
     let n = getNormal(in);
 	let v = normalize(in.viewDirectionWorld);
@@ -306,7 +306,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {
     // Environment lighting
     {
         // Sample the irradiance texture
-        let diffuseEnv = textureSample(iblIrradianceTexture, iblSampler, in.normalWorld).rgb;
+        let diffuseEnv = textureSample(iblIrradianceTexture, iblSampler, n).rgb;
         let iblDiffuse = diffuseEnv * materialInfo.baseColor.rgb;
 
         // Sample the specular texture
@@ -319,8 +319,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {
         color += mix(iblDielectric, iblMetal, materialInfo.metallic);
     }
 
-    let ao = textureSample(occlusionTexture, textureSampler, in.texCoord0).r * materialUniforms.occlusionStrength;
-    color *= vec3f(ao);
+    let ao = textureSample(occlusionTexture, textureSampler, in.texCoord0).r;
+    color = color * (1.0 + materialUniforms.occlusionStrength * (ao - 1.0));
 
     // Direct lighting
     if (false) {
