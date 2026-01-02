@@ -579,23 +579,13 @@ void VulkanEnvironmentPreprocessor::InitComputePipelines() {
 
     _pipelineLayout = _core.GetRaiiDevice().createPipelineLayout(layoutInfo);
 
-    // Load compute shaders
-    std::filesystem::path shaderPath = std::filesystem::path(__FILE__).parent_path() / "shaders" /
-                                       "environment_prefilter.comp.spv";
-
-    VK_LOG_INFO("Loading SPIR-V: " + shaderPath.filename().string());
-    auto spirvOpt = vkshader::LoadSPIRV(shaderPath.string());
-    if (!spirvOpt.has_value()) {
-        throw std::runtime_error("Failed to load SPIR-V: " + shaderPath.string());
+    // Compile and load compute shader.
+    const std::filesystem::path shaderPath{GFX_VULKAN_SHADER_PATH};
+    auto shaderModule = vkshader::CompileAndLoadShaderModule(
+        _core.GetRaiiDevice(), shaderPath / "environment_prefilter.comp");
+    if (!*shaderModule) {
+        throw std::runtime_error("Failed to compile environment_prefilter compute shader");
     }
-    std::vector<uint32_t> spirv = std::move(spirvOpt.value());
-    VK_LOG_INFO("Loaded SPIR-V: " + shaderPath.filename().string() + " (" +
-                std::to_string(spirv.size() * 4) + " bytes)");
-
-    vk::ShaderModuleCreateInfo shaderInfo{};
-    shaderInfo.codeSize = spirv.size() * sizeof(uint32_t);
-    shaderInfo.pCode = spirv.data();
-    vk::raii::ShaderModule shaderModule = _core.GetRaiiDevice().createShaderModule(shaderInfo);
 
     vk::PipelineShaderStageCreateInfo stageInfo{};
     stageInfo.stage = vk::ShaderStageFlagBits::eCompute;

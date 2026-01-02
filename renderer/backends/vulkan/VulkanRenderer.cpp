@@ -732,6 +732,21 @@ void VulkanRenderer::SetEnvironment(const Environment& environment) {
     CreateGlobalDescriptorSets();
 }
 
+void VulkanRenderer::ReloadShaders() {
+
+    // Wait for any in-flight frames to complete before destroying old pipelines.
+    _core->GetDevice().waitIdle();
+
+    // Destroy old pipelines.
+    _environmentPipeline = nullptr;
+    _modelPipelineOpaqueSingleSided = nullptr;
+    _modelPipelineOpaqueDoubleSided = nullptr;
+    _modelPipelineTransparent = nullptr;
+
+    CreateEnvironmentPipeline();
+    CreateModelPipelines();
+}
+
 // -------------------------------------------------------------------------
 // Core initialization
 
@@ -1206,12 +1221,12 @@ void VulkanRenderer::CreateEnvironmentPipeline() {
     const auto& device = _core->GetRaiiDevice();
     const std::filesystem::path shaderPath{GFX_VULKAN_SHADER_PATH};
 
-    // Load shader modules (environment shaders with GlobalUniforms).
-    auto vertModule = vkshader::LoadShaderModule(device, shaderPath / "environment.vert.spv");
-    auto fragModule = vkshader::LoadShaderModule(device, shaderPath / "environment.frag.spv");
+    // Compile and load shader modules.
+    auto vertModule = vkshader::CompileAndLoadShaderModule(device, shaderPath / "environment.vert");
+    auto fragModule = vkshader::CompileAndLoadShaderModule(device, shaderPath / "environment.frag");
 
     if (!*vertModule || !*fragModule) {
-        throw std::runtime_error("Failed to load shader modules");
+        throw std::runtime_error("Failed to compile environment shaders");
     }
 
     // Shader stages
@@ -1993,12 +2008,12 @@ void VulkanRenderer::CreateModelPipelines() {
     const auto& device = _core->GetRaiiDevice();
     const std::filesystem::path shaderPath{GFX_VULKAN_SHADER_PATH};
 
-    // Load shader modules.
-    auto vertModule = vkshader::LoadShaderModule(device, shaderPath / "gltf_pbr.vert.spv");
-    auto fragModule = vkshader::LoadShaderModule(device, shaderPath / "gltf_pbr.frag.spv");
+    // Compile and load shader modules.
+    auto vertModule = vkshader::CompileAndLoadShaderModule(device, shaderPath / "gltf_pbr.vert");
+    auto fragModule = vkshader::CompileAndLoadShaderModule(device, shaderPath / "gltf_pbr.frag");
 
     if (!*vertModule || !*fragModule) {
-        throw std::runtime_error("Failed to load model shader modules");
+        throw std::runtime_error("Failed to compile model shaders");
     }
 
     // Shader stages.

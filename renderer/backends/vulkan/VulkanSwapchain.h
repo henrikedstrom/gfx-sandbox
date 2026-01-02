@@ -1,9 +1,9 @@
-#pragma once
-
 /// @file  VulkanSwapchain.h
 /// @brief Manages the Vulkan swapchain and associated image views.
 ///
 /// Handles creation, recreation (on resize), and image acquisition.
+
+#pragma once
 
 // Vulkan-HPP Configuration (must be included first)
 #include "VulkanConfig.h"

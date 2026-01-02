@@ -1,7 +1,7 @@
-#pragma once
-
 /// @file  VulkanShaderUtils.h
-/// @brief SPIR-V shader loading and Vulkan shader module creation.
+/// @brief Runtime GLSL compilation and Vulkan shader module creation.
+
+#pragma once
 
 // Vulkan-HPP Configuration (must be included first)
 #include "VulkanConfig.h"
@@ -10,39 +10,43 @@
 #include <cstdint>
 #include <filesystem>
 #include <optional>
-#include <span>
+#include <string_view>
 #include <vector>
 
 namespace vkshader {
 
-/// Loads pre-compiled SPIR-V bytecode from a file.
-/// @param filepath Path to the .spv file.
-/// @return SPIR-V bytecode as uint32_t words, or std::nullopt on failure.
-[[nodiscard]] std::optional<std::vector<uint32_t>> LoadSPIRV(
-    const std::filesystem::path& filepath);
+// clang-format off
+enum class ShaderKind {
+    Vertex,
+    Fragment,
+    Compute,
+    Geometry,
+    TessControl,
+    TessEvaluation
+};
+// clang-format on
 
-/// Creates a Vulkan shader module from SPIR-V bytecode.
-/// @param device The Vulkan device to create the module on.
-/// @param spirv SPIR-V bytecode as uint32_t words.
-/// @return The created shader module (RAII managed).
-[[nodiscard]] vk::raii::ShaderModule CreateShaderModule(
-    const vk::raii::Device& device, std::span<const uint32_t> spirv);
+// -------------------------------------------------------------------------
+// Runtime GLSL Compilation
 
-/// Loads a SPIR-V file and creates a shader module in one step.
-/// @param device The Vulkan device to create the module on.
-/// @param filepath Path to the .spv file.
-/// @return The created shader module, or nullptr on failure.
-[[nodiscard]] vk::raii::ShaderModule LoadShaderModule(
-    const vk::raii::Device& device, const std::filesystem::path& filepath);
+// Infers shader kind from file extension (.vert, .frag, .comp, etc.).
+[[nodiscard]] std::optional<ShaderKind> InferShaderKind(const std::filesystem::path& filepath);
 
-/// Creates a pipeline shader stage create info structure.
-/// @param stage The shader stage (vertex, fragment, etc.).
-/// @param module The shader module.
-/// @param entryPoint The entry point function name (default: "main").
-/// @return Configured shader stage create info.
-[[nodiscard]] vk::PipelineShaderStageCreateInfo CreateShaderStageInfo(
-    vk::ShaderStageFlagBits stage, const vk::raii::ShaderModule& module,
-    const char* entryPoint = "main");
+// Compiles GLSL source code to SPIR-V using shaderc.
+[[nodiscard]] std::optional<std::vector<uint32_t>> CompileGLSL(std::string_view source,
+                                                               ShaderKind kind,
+                                                               std::string_view filename = "shader",
+                                                               const char* entryPoint = "main");
+
+// Loads a GLSL file, compiles to SPIR-V, and creates a shader module.
+[[nodiscard]] vk::raii::ShaderModule
+CompileAndLoadShaderModule(const vk::raii::Device& device, const std::filesystem::path& filepath);
+
+// -------------------------------------------------------------------------
+// Pipeline Helpers
+
+[[nodiscard]] vk::PipelineShaderStageCreateInfo
+CreateShaderStageInfo(vk::ShaderStageFlagBits stage, const vk::raii::ShaderModule& module,
+                      const char* entryPoint = "main");
 
 } // namespace vkshader
-

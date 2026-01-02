@@ -37,7 +37,7 @@ class VulkanRenderer final : public IRenderer {
     void Render(const glm::mat4& modelMatrix, const CameraUniformsInput& camera) override;
     void SetModel(const Model& model) override;
     void SetEnvironment(const Environment& environment) override;
-    void ReloadShaders() override {}
+    void ReloadShaders() override;
 
   private:
     // -------------------------------------------------------------------------

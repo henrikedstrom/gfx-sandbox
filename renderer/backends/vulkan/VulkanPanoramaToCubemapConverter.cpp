@@ -343,12 +343,12 @@ void VulkanPanoramaToCubemapConverter::InitDescriptorPool() {
 void VulkanPanoramaToCubemapConverter::InitComputePipeline() {
     const std::filesystem::path shaderPath{GFX_VULKAN_SHADER_PATH};
 
-    // Load compute shader.
-    auto compModule = vkshader::LoadShaderModule(_core.GetRaiiDevice(),
-                                                 shaderPath / "panorama_to_cubemap.comp.spv");
+    // Compile and load compute shader.
+    auto compModule = vkshader::CompileAndLoadShaderModule(_core.GetRaiiDevice(),
+                                                           shaderPath / "panorama_to_cubemap.comp");
 
     if (!*compModule) {
-        throw std::runtime_error("Failed to load panorama_to_cubemap compute shader");
+        throw std::runtime_error("Failed to compile panorama_to_cubemap compute shader");
     }
 
     // Create pipeline layout with push constants.
