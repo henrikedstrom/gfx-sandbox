@@ -29,7 +29,7 @@ constexpr const char* kModuleName = "Vulkan";
 
 // Swapchain Settings
 // TODO: Replace with cvar later
-constexpr vk::PresentModeKHR kPreferredPresentMode = vk::PresentModeKHR::eMailbox;
+constexpr vk::PresentModeKHR kPreferredPresentMode = vk::PresentModeKHR::eFifo;
 
 // Synchronization Settings
 constexpr uint32_t kMaxFramesInFlight = 2;
