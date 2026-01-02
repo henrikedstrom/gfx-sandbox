@@ -25,10 +25,11 @@ macro(FetchContent_DeclareShallowGit Name GIT_REPOSITORY GitRepository GIT_TAG G
 endmacro()
 
 # GLM (header-only math library)
+set(GFX_GLM_VERSION "1.0.2" CACHE STRING "GLM version" FORCE)
 FetchContent_Declare(
   glm
   GIT_REPOSITORY https://github.com/g-truc/glm.git
-  GIT_TAG 1.0.2
+  GIT_TAG ${GFX_GLM_VERSION}
   GIT_SHALLOW ON
 )
 FetchContent_MakeAvailable(glm)
@@ -36,6 +37,7 @@ set_directory_root_folder("${glm_SOURCE_DIR}" "ThirdParty/glm")
 
 # GLFW (windowing, only on native platforms)
 if(NOT EMSCRIPTEN)
+  set(GFX_GLFW_VERSION "3.4" CACHE STRING "GLFW version" FORCE)
   # Disable GLFW extras we don't need
   set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
   set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
@@ -44,7 +46,7 @@ if(NOT EMSCRIPTEN)
   FetchContent_Declare(
     glfw
     GIT_REPOSITORY https://github.com/glfw/glfw.git
-    GIT_TAG 3.4
+    GIT_TAG ${GFX_GLFW_VERSION}
     GIT_SHALLOW ON
   )
   FetchContent_MakeAvailable(glfw)

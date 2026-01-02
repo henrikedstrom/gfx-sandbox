@@ -62,12 +62,14 @@ endif()
 
 # ----------------------------------------------------------------------
 # Fetch Dawn using a shallow git clone.
-# Tag 0223916e3a572e7c264d0b8da5f077556e660871 corresponds to Chrome 144.
 # ----------------------------------------------------------------------
+set(GFX_DAWN_VERSION "chromium/7559 (Chrome 144)" CACHE STRING "Dawn version" FORCE)
+set(GFX_DAWN_COMMIT "0223916e3a572e7c264d0b8da5f077556e660871")
+
 FetchContent_DeclareShallowGit(
   dawn
   GIT_REPOSITORY  https://github.com/google/dawn
-  GIT_TAG         0223916e3a572e7c264d0b8da5f077556e660871
+  GIT_TAG         ${GFX_DAWN_COMMIT}
 )
 FetchContent_MakeAvailable(dawn)
 
