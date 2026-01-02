@@ -39,6 +39,7 @@ class WebgpuRenderer final : public IRenderer {
 
   private:
     // Private utility methods
+    void WaitForGpuIdle();
     void InitGraphics();
     void ConfigureSurface();
     void CreateDepthTexture();

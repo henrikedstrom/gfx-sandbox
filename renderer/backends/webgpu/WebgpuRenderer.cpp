@@ -196,10 +196,13 @@ void CreateEnvironmentTexture(wgpu::Device device, wgpu::TextureViewDimension ty
     textureView = texture.CreateView(&viewDescriptor);
 }
 
+/// No-op callback for queue work completion - used only to wait on the returned future.
+void OnQueueWorkDone(wgpu::QueueWorkDoneStatus /*status*/, const char* /*message*/) {}
+
 } // namespace
 
 //----------------------------------------------------------------------
-// Renderer Class implementation
+// Construction / Destruction
 
 WebgpuRenderer::WebgpuRenderer(GLFWwindow* window) : _window(window) {
 #if defined(GFX_USE_DAWN_NATIVE_PROC)
@@ -308,10 +311,7 @@ WebgpuRenderer::WebgpuRenderer(GLFWwindow* window) : _window(window) {
 WebgpuRenderer::~WebgpuRenderer() {
     // Wait for GPU to finish all pending work before releasing resources.
     if (_device) {
-        wgpu::Future workDoneFuture = _device.GetQueue().OnSubmittedWorkDone(
-            wgpu::CallbackMode::WaitAnyOnly,
-            [](wgpu::QueueWorkDoneStatus /*status*/, const char* /*message*/) {});
-        _instance.WaitAny(workDoneFuture, UINT64_MAX);
+        WaitForGpuIdle();
     }
 
     // Clear collections first (these hold GPU resources).
@@ -379,6 +379,9 @@ WebgpuRenderer::~WebgpuRenderer() {
     WGPU_LOG_INFO("Destroyed.");
 }
 
+//----------------------------------------------------------------------
+// IRenderer Interface
+
 void WebgpuRenderer::Resize() {
     CreateDepthTexture();
     ConfigureSurface();
@@ -443,18 +446,6 @@ void WebgpuRenderer::Render(const glm::mat4& modelMatrix, const CameraUniformsIn
     _surface.Present();
     _instance.ProcessEvents();
 #endif
-}
-
-void WebgpuRenderer::ReloadShaders() {
-    _environmentPipeline = nullptr;
-    _environmentShaderModule = nullptr;
-    _modelPipelineOpaqueSingleSided = nullptr;
-    _modelPipelineOpaqueDoubleSided = nullptr;
-    _modelPipelineTransparent = nullptr;
-    _modelShaderModule = nullptr;
-
-    CreateEnvironmentRenderPipeline();
-    CreateModelRenderPipelines();
 }
 
 void WebgpuRenderer::SetModel(const Model& model) {
@@ -529,6 +520,27 @@ void WebgpuRenderer::SetEnvironment(const Environment& environment) {
     CreateGlobalBindGroup();
 }
 
+void WebgpuRenderer::ReloadShaders() {
+    _environmentPipeline = nullptr;
+    _environmentShaderModule = nullptr;
+    _modelPipelineOpaqueSingleSided = nullptr;
+    _modelPipelineOpaqueDoubleSided = nullptr;
+    _modelPipelineTransparent = nullptr;
+    _modelShaderModule = nullptr;
+
+    CreateEnvironmentRenderPipeline();
+    CreateModelRenderPipelines();
+}
+
+//----------------------------------------------------------------------
+// Private Utility Methods
+
+void WebgpuRenderer::WaitForGpuIdle() {
+    wgpu::Future workDoneFuture =
+        _device.GetQueue().OnSubmittedWorkDone(wgpu::CallbackMode::WaitAnyOnly, OnQueueWorkDone);
+    _instance.WaitAny(workDoneFuture, UINT64_MAX);
+}
+
 void WebgpuRenderer::InitGraphics() {
     ConfigureSurface();
     CreateDepthTexture();
@@ -548,100 +560,6 @@ void WebgpuRenderer::InitGraphics() {
 
     // Create global bind group with default textures (environment not set yet).
     CreateGlobalBindGroup();
-}
-
-void WebgpuRenderer::CreateDefaultTextures() {
-    // 1x1 white sRGB texture
-    {
-        const uint8_t whitePixel[4] = {255, 255, 255, 255};
-        wgpu::TextureDescriptor desc{};
-        desc.size = {1, 1, 1};
-        desc.format = wgpu::TextureFormat::RGBA8UnormSrgb;
-        desc.usage = wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::CopyDst;
-        _defaultSRGBTexture = _device.CreateTexture(&desc);
-
-        wgpu::TexelCopyTextureInfo dst{};
-        dst.texture = _defaultSRGBTexture;
-        wgpu::TexelCopyBufferLayout layout{};
-        layout.bytesPerRow = 4;
-        wgpu::Extent3D size{1, 1, 1};
-        _device.GetQueue().WriteTexture(&dst, whitePixel, sizeof(whitePixel), &layout, &size);
-
-        _defaultSRGBTextureView = _defaultSRGBTexture.CreateView();
-    }
-
-    // 1x1 white UNORM texture
-    {
-        const uint8_t whitePixel[4] = {255, 255, 255, 255};
-        wgpu::TextureDescriptor desc{};
-        desc.size = {1, 1, 1};
-        desc.format = wgpu::TextureFormat::RGBA8Unorm;
-        desc.usage = wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::CopyDst;
-        _defaultUNormTexture = _device.CreateTexture(&desc);
-
-        wgpu::TexelCopyTextureInfo dst{};
-        dst.texture = _defaultUNormTexture;
-        wgpu::TexelCopyBufferLayout layout{};
-        layout.bytesPerRow = 4;
-        wgpu::Extent3D size{1, 1, 1};
-        _device.GetQueue().WriteTexture(&dst, whitePixel, sizeof(whitePixel), &layout, &size);
-
-        _defaultUNormTextureView = _defaultUNormTexture.CreateView();
-    }
-
-    // 1x1 flat normal (128,128,255,255) UNORM
-    {
-        const uint8_t flatNormal[4] = {128, 128, 255, 255};
-        wgpu::TextureDescriptor desc{};
-        desc.size = {1, 1, 1};
-        desc.format = wgpu::TextureFormat::RGBA8Unorm;
-        desc.usage = wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::CopyDst;
-        _defaultNormalTexture = _device.CreateTexture(&desc);
-
-        wgpu::TexelCopyTextureInfo dst{};
-        dst.texture = _defaultNormalTexture;
-        wgpu::TexelCopyBufferLayout layout{};
-        layout.bytesPerRow = 4;
-        wgpu::Extent3D size{1, 1, 1};
-        _device.GetQueue().WriteTexture(&dst, flatNormal, sizeof(flatNormal), &layout, &size);
-
-        _defaultNormalTextureView = _defaultNormalTexture.CreateView();
-    }
-
-    // 1x1x6 white cube texture (environment fallback)
-    {
-        const uint8_t whitePixel[4] = {255, 255, 255, 255};
-        wgpu::TextureDescriptor desc{};
-        desc.size = {1, 1, 6};
-        desc.format = wgpu::TextureFormat::RGBA8Unorm;
-        desc.usage = wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::CopyDst;
-        _defaultCubeTexture = _device.CreateTexture(&desc);
-
-        wgpu::TexelCopyTextureInfo dst{};
-        dst.texture = _defaultCubeTexture;
-        wgpu::TexelCopyBufferLayout layout{};
-        layout.bytesPerRow = 4;
-        wgpu::Extent3D size{1, 1, 1};
-
-        // Write white pixel to each face of the cubemap.
-        for (uint32_t face = 0; face < 6; ++face) {
-            dst.origin = {0, 0, face};
-            _device.GetQueue().WriteTexture(&dst, whitePixel, sizeof(whitePixel), &layout, &size);
-        }
-
-        wgpu::TextureViewDescriptor viewDesc{};
-        viewDesc.format = wgpu::TextureFormat::RGBA8Unorm;
-        viewDesc.dimension = wgpu::TextureViewDimension::Cube;
-        viewDesc.arrayLayerCount = 6;
-        _defaultCubeTextureView = _defaultCubeTexture.CreateView(&viewDesc);
-    }
-}
-
-std::pair<uint32_t, uint32_t> WebgpuRenderer::GetFramebufferSize() const {
-    int width = 0;
-    int height = 0;
-    glfwGetFramebufferSize(_window, &width, &height);
-    return {static_cast<uint32_t>(std::max(width, 0)), static_cast<uint32_t>(std::max(height, 0))};
 }
 
 void WebgpuRenderer::ConfigureSurface() {
@@ -666,6 +584,13 @@ void WebgpuRenderer::CreateDepthTexture() {
 
     _depthTexture = _device.CreateTexture(&depthTextureDescriptor);
     _depthTextureView = _depthTexture.CreateView();
+}
+
+std::pair<uint32_t, uint32_t> WebgpuRenderer::GetFramebufferSize() const {
+    int width = 0;
+    int height = 0;
+    glfwGetFramebufferSize(_window, &width, &height);
+    return {static_cast<uint32_t>(std::max(width, 0)), static_cast<uint32_t>(std::max(height, 0))};
 }
 
 void WebgpuRenderer::CreateBindGroupLayouts() {
@@ -799,26 +724,6 @@ void WebgpuRenderer::CreateSamplers() {
     }
 }
 
-void WebgpuRenderer::CreateRenderPassDescriptor() {
-    // Configure color attachment.
-    _colorAttachment.loadOp = wgpu::LoadOp::Clear;
-    _colorAttachment.storeOp = wgpu::StoreOp::Store;
-    _colorAttachment.clearValue = {.r = 0.0f, .g = 0.2f, .b = 0.4f, .a = 1.0f};
-
-    // Configure depth attachment.
-    _depthAttachment.view = _depthTextureView;
-    _depthAttachment.depthLoadOp = wgpu::LoadOp::Clear;
-    _depthAttachment.depthStoreOp = wgpu::StoreOp::Store;
-    _depthAttachment.depthClearValue = 1.0f;
-    _depthAttachment.stencilLoadOp = wgpu::LoadOp::Clear;
-    _depthAttachment.stencilStoreOp = wgpu::StoreOp::Store;
-
-    // Initialize render pass descriptor.
-    _renderPassDescriptor.colorAttachmentCount = 1;
-    _renderPassDescriptor.colorAttachments = &_colorAttachment;
-    _renderPassDescriptor.depthStencilAttachment = &_depthAttachment;
-}
-
 void WebgpuRenderer::CreateVertexBuffer(const Model& model) {
     const std::vector<Model::Vertex>& vertexData = model.GetVertices();
 
@@ -915,10 +820,7 @@ void WebgpuRenderer::CreateEnvironmentTextures(const Environment& environment) {
                                     MipmapGenerator::MipKind::Float16Cube);
 
     // Wait for GPU to finish IBL work before returning to avoid rendering with invalid textures.
-    wgpu::Future workDoneFuture = _device.GetQueue().OnSubmittedWorkDone(
-        wgpu::CallbackMode::WaitAnyOnly,
-        [](wgpu::QueueWorkDoneStatus /*status*/, const char* /*message*/) {});
-    _instance.WaitAny(workDoneFuture, UINT64_MAX);
+    WaitForGpuIdle();
 }
 
 void WebgpuRenderer::CreateMaterials(const Model& model) {
@@ -1155,6 +1057,56 @@ void WebgpuRenderer::CreateGlobalBindGroup() {
     _globalBindGroup = _device.CreateBindGroup(&bindGroupDescriptor);
 }
 
+void WebgpuRenderer::CreateEnvironmentRenderPipeline() {
+    wgpu::ColorTargetState colorTargetState{};
+    colorTargetState.format = _surfaceFormat;
+
+    wgpu::FragmentState fragmentState{};
+    fragmentState.module = _modelShaderModule;
+    fragmentState.entryPoint = "fs_main";
+    fragmentState.targetCount = 1;
+    fragmentState.targets = &colorTargetState;
+
+    wgpu::DepthStencilState depthStencilState{};
+    depthStencilState.format = wgpu::TextureFormat::Depth24PlusStencil8;
+    depthStencilState.depthWriteEnabled = true;
+    depthStencilState.depthCompare = wgpu::CompareFunction::LessEqual;
+
+    // Create an environment pipeline
+    const std::string environmentShader =
+        shader_utils::LoadShaderFile(GFX_WEBGPU_SHADER_PATH "/environment.wgsl");
+    wgpu::ShaderSourceWGSL environmentWgsl{
+        {.nextInChain = nullptr, .code = environmentShader.c_str()}};
+    wgpu::ShaderModuleDescriptor environmentShaderModuleDescriptor{.nextInChain = &environmentWgsl};
+    _environmentShaderModule = _device.CreateShaderModule(&environmentShaderModuleDescriptor);
+
+    wgpu::FragmentState environmentFragmentState{};
+    environmentFragmentState.module = _environmentShaderModule;
+    environmentFragmentState.entryPoint = "fs_main";
+    environmentFragmentState.targetCount = 1;
+    environmentFragmentState.targets = &colorTargetState;
+
+    wgpu::BindGroupLayout environmentBindGroupLayouts[] = {_globalBindGroupLayout};
+    wgpu::PipelineLayoutDescriptor environmentLayoutDescriptor{};
+    environmentLayoutDescriptor.bindGroupLayoutCount = 1;
+    environmentLayoutDescriptor.bindGroupLayouts = environmentBindGroupLayouts;
+    wgpu::PipelineLayout environmentPipelineLayout =
+        _device.CreatePipelineLayout(&environmentLayoutDescriptor);
+
+    depthStencilState.depthWriteEnabled = false; // Disable depth writes for the environment
+    wgpu::RenderPipelineDescriptor environmentDescriptor{};
+    environmentDescriptor.layout = environmentPipelineLayout;
+    environmentDescriptor.vertex.module = _environmentShaderModule;
+    environmentDescriptor.vertex.entryPoint = "vs_main";
+    environmentDescriptor.vertex.bufferCount = 0;
+    environmentDescriptor.vertex.buffers = nullptr; // Vertices encoded in shader
+    environmentDescriptor.primitive.topology = wgpu::PrimitiveTopology::TriangleList;
+    environmentDescriptor.depthStencil = &depthStencilState;
+    environmentDescriptor.fragment = &environmentFragmentState;
+
+    _environmentPipeline = _device.CreateRenderPipeline(&environmentDescriptor);
+}
+
 void WebgpuRenderer::CreateModelRenderPipelines() {
     const std::string shader =
         shader_utils::LoadShaderFile(GFX_WEBGPU_SHADER_PATH "/gltf_pbr.wgsl");
@@ -1245,54 +1197,111 @@ void WebgpuRenderer::CreateModelRenderPipelines() {
     _modelPipelineTransparent = _device.CreateRenderPipeline(&descriptor);
 }
 
-void WebgpuRenderer::CreateEnvironmentRenderPipeline() {
-    wgpu::ColorTargetState colorTargetState{};
-    colorTargetState.format = _surfaceFormat;
+void WebgpuRenderer::CreateRenderPassDescriptor() {
+    // Configure color attachment.
+    _colorAttachment.loadOp = wgpu::LoadOp::Clear;
+    _colorAttachment.storeOp = wgpu::StoreOp::Store;
+    _colorAttachment.clearValue = {.r = 0.0f, .g = 0.2f, .b = 0.4f, .a = 1.0f};
 
-    wgpu::FragmentState fragmentState{};
-    fragmentState.module = _modelShaderModule;
-    fragmentState.entryPoint = "fs_main";
-    fragmentState.targetCount = 1;
-    fragmentState.targets = &colorTargetState;
+    // Configure depth attachment.
+    _depthAttachment.view = _depthTextureView;
+    _depthAttachment.depthLoadOp = wgpu::LoadOp::Clear;
+    _depthAttachment.depthStoreOp = wgpu::StoreOp::Store;
+    _depthAttachment.depthClearValue = 1.0f;
+    _depthAttachment.stencilLoadOp = wgpu::LoadOp::Clear;
+    _depthAttachment.stencilStoreOp = wgpu::StoreOp::Store;
 
-    wgpu::DepthStencilState depthStencilState{};
-    depthStencilState.format = wgpu::TextureFormat::Depth24PlusStencil8;
-    depthStencilState.depthWriteEnabled = true;
-    depthStencilState.depthCompare = wgpu::CompareFunction::LessEqual;
+    // Initialize render pass descriptor.
+    _renderPassDescriptor.colorAttachmentCount = 1;
+    _renderPassDescriptor.colorAttachments = &_colorAttachment;
+    _renderPassDescriptor.depthStencilAttachment = &_depthAttachment;
+}
 
-    // Create an environment pipeline
-    const std::string environmentShader =
-        shader_utils::LoadShaderFile(GFX_WEBGPU_SHADER_PATH "/environment.wgsl");
-    wgpu::ShaderSourceWGSL environmentWgsl{
-        {.nextInChain = nullptr, .code = environmentShader.c_str()}};
-    wgpu::ShaderModuleDescriptor environmentShaderModuleDescriptor{.nextInChain = &environmentWgsl};
-    _environmentShaderModule = _device.CreateShaderModule(&environmentShaderModuleDescriptor);
+void WebgpuRenderer::CreateDefaultTextures() {
+    // 1x1 white sRGB texture
+    {
+        const uint8_t whitePixel[4] = {255, 255, 255, 255};
+        wgpu::TextureDescriptor desc{};
+        desc.size = {1, 1, 1};
+        desc.format = wgpu::TextureFormat::RGBA8UnormSrgb;
+        desc.usage = wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::CopyDst;
+        _defaultSRGBTexture = _device.CreateTexture(&desc);
 
-    wgpu::FragmentState environmentFragmentState{};
-    environmentFragmentState.module = _environmentShaderModule;
-    environmentFragmentState.entryPoint = "fs_main";
-    environmentFragmentState.targetCount = 1;
-    environmentFragmentState.targets = &colorTargetState;
+        wgpu::TexelCopyTextureInfo dst{};
+        dst.texture = _defaultSRGBTexture;
+        wgpu::TexelCopyBufferLayout layout{};
+        layout.bytesPerRow = 4;
+        wgpu::Extent3D size{1, 1, 1};
+        _device.GetQueue().WriteTexture(&dst, whitePixel, sizeof(whitePixel), &layout, &size);
 
-    wgpu::BindGroupLayout environmentBindGroupLayouts[] = {_globalBindGroupLayout};
-    wgpu::PipelineLayoutDescriptor environmentLayoutDescriptor{};
-    environmentLayoutDescriptor.bindGroupLayoutCount = 1;
-    environmentLayoutDescriptor.bindGroupLayouts = environmentBindGroupLayouts;
-    wgpu::PipelineLayout environmentPipelineLayout =
-        _device.CreatePipelineLayout(&environmentLayoutDescriptor);
+        _defaultSRGBTextureView = _defaultSRGBTexture.CreateView();
+    }
 
-    depthStencilState.depthWriteEnabled = false; // Disable depth writes for the environment
-    wgpu::RenderPipelineDescriptor environmentDescriptor{};
-    environmentDescriptor.layout = environmentPipelineLayout;
-    environmentDescriptor.vertex.module = _environmentShaderModule;
-    environmentDescriptor.vertex.entryPoint = "vs_main";
-    environmentDescriptor.vertex.bufferCount = 0;
-    environmentDescriptor.vertex.buffers = nullptr; // Vertices encoded in shader
-    environmentDescriptor.primitive.topology = wgpu::PrimitiveTopology::TriangleList;
-    environmentDescriptor.depthStencil = &depthStencilState;
-    environmentDescriptor.fragment = &environmentFragmentState;
+    // 1x1 white UNORM texture
+    {
+        const uint8_t whitePixel[4] = {255, 255, 255, 255};
+        wgpu::TextureDescriptor desc{};
+        desc.size = {1, 1, 1};
+        desc.format = wgpu::TextureFormat::RGBA8Unorm;
+        desc.usage = wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::CopyDst;
+        _defaultUNormTexture = _device.CreateTexture(&desc);
 
-    _environmentPipeline = _device.CreateRenderPipeline(&environmentDescriptor);
+        wgpu::TexelCopyTextureInfo dst{};
+        dst.texture = _defaultUNormTexture;
+        wgpu::TexelCopyBufferLayout layout{};
+        layout.bytesPerRow = 4;
+        wgpu::Extent3D size{1, 1, 1};
+        _device.GetQueue().WriteTexture(&dst, whitePixel, sizeof(whitePixel), &layout, &size);
+
+        _defaultUNormTextureView = _defaultUNormTexture.CreateView();
+    }
+
+    // 1x1 flat normal (128,128,255,255) UNORM
+    {
+        const uint8_t flatNormal[4] = {128, 128, 255, 255};
+        wgpu::TextureDescriptor desc{};
+        desc.size = {1, 1, 1};
+        desc.format = wgpu::TextureFormat::RGBA8Unorm;
+        desc.usage = wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::CopyDst;
+        _defaultNormalTexture = _device.CreateTexture(&desc);
+
+        wgpu::TexelCopyTextureInfo dst{};
+        dst.texture = _defaultNormalTexture;
+        wgpu::TexelCopyBufferLayout layout{};
+        layout.bytesPerRow = 4;
+        wgpu::Extent3D size{1, 1, 1};
+        _device.GetQueue().WriteTexture(&dst, flatNormal, sizeof(flatNormal), &layout, &size);
+
+        _defaultNormalTextureView = _defaultNormalTexture.CreateView();
+    }
+
+    // 1x1x6 white cube texture (environment fallback)
+    {
+        const uint8_t whitePixel[4] = {255, 255, 255, 255};
+        wgpu::TextureDescriptor desc{};
+        desc.size = {1, 1, 6};
+        desc.format = wgpu::TextureFormat::RGBA8Unorm;
+        desc.usage = wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::CopyDst;
+        _defaultCubeTexture = _device.CreateTexture(&desc);
+
+        wgpu::TexelCopyTextureInfo dst{};
+        dst.texture = _defaultCubeTexture;
+        wgpu::TexelCopyBufferLayout layout{};
+        layout.bytesPerRow = 4;
+        wgpu::Extent3D size{1, 1, 1};
+
+        // Write white pixel to each face of the cubemap.
+        for (uint32_t face = 0; face < 6; ++face) {
+            dst.origin = {0, 0, face};
+            _device.GetQueue().WriteTexture(&dst, whitePixel, sizeof(whitePixel), &layout, &size);
+        }
+
+        wgpu::TextureViewDescriptor viewDesc{};
+        viewDesc.format = wgpu::TextureFormat::RGBA8Unorm;
+        viewDesc.dimension = wgpu::TextureViewDimension::Cube;
+        viewDesc.arrayLayerCount = 6;
+        _defaultCubeTextureView = _defaultCubeTexture.CreateView(&viewDesc);
+    }
 }
 
 void WebgpuRenderer::UpdateUniforms(const glm::mat4& modelMatrix,
