@@ -42,6 +42,11 @@ target_link_libraries(gfx_renderer_vulkan PUBLIC
   glfw
 )
 
+# Suppress LNK4099 warnings for missing PDB files in Vulkan SDK's shaderc library
+if(MSVC)
+  target_link_options(gfx_renderer_vulkan PUBLIC /ignore:4099)
+endif()
+
 set_target_properties(gfx_renderer_vulkan PROPERTIES FOLDER "Renderer/Backends/Vulkan")
 
 # Shader path configuration (compile-time constant for native builds)
