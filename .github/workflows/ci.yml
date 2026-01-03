@@ -13,6 +13,9 @@ on:
 permissions:
   contents: read
 
+env:
+  VULKAN_SDK_VERSION: "1.4.335.0"
+
 jobs:
   # Native builds for Windows, macOS, and Linux
   native:
@@ -46,11 +49,102 @@ jobs:
             libxkbcommon-dev \
             libgl1-mesa-dev
 
-      - name: Install Vulkan SDK
+      # Platform-specific Vulkan SDK installation
+      - name: Install Vulkan SDK (Linux)
+        if: runner.os == 'Linux'
         uses: humbletim/install-vulkan-sdk@v1.2
         with:
-          version: 1.4.309.0
+          version: ${{ env.VULKAN_SDK_VERSION }}
           cache: true
+
+      - name: Install Vulkan SDK (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $version = "${{ env.VULKAN_SDK_VERSION }}"
+          $installerUrl = "https://sdk.lunarg.com/sdk/download/$version/windows/vulkan_sdk.exe?Human=true"
+          $installerPath = "$env:RUNNER_TEMP\VulkanSDK-Installer.exe"
+          
+          Write-Host "Downloading Vulkan SDK $version..."
+          Invoke-WebRequest -Uri $installerUrl -OutFile $installerPath -UseBasicParsing
+          
+          Write-Host "Installing Vulkan SDK with debug components..."
+          # Install core SDK + debug component (for shaderc_combinedd.lib)
+          $process = Start-Process -FilePath $installerPath `
+            -ArgumentList "--accept-licenses", "--default-answer", "--confirm-command", "install", "com.lunarg.vulkan.debug" `
+            -Wait -PassThru -NoNewWindow
+          
+          if ($process.ExitCode -ne 0) {
+            Write-Error "Vulkan SDK installation failed with exit code $($process.ExitCode)"
+            exit 1
+          }
+          
+          $sdkPath = "C:\VulkanSDK\$version"
+          Write-Host "Vulkan SDK installed to: $sdkPath"
+          
+          # Verify installation - headers
+          if (-not (Test-Path "$sdkPath\Include\vulkan\vulkan.h")) {
+            Write-Error "Vulkan SDK installation verification failed - headers not found"
+            Get-ChildItem "C:\VulkanSDK\" -ErrorAction SilentlyContinue | Format-Table
+            exit 1
+          }
+          
+          # Verify debug library exists
+          if (-not (Test-Path "$sdkPath\Lib\shaderc_combinedd.lib")) {
+            Write-Error "Debug shaderc library not found - debug component may not have installed"
+            Get-ChildItem "$sdkPath\Lib\*shaderc*" -ErrorAction SilentlyContinue | Format-Table Name, Length
+            exit 1
+          }
+          
+          Write-Host "Vulkan SDK installation verified (including debug libraries)"
+          
+          # Set environment for subsequent steps
+          echo "VULKAN_SDK=$sdkPath" >> $env:GITHUB_ENV
+          echo "$sdkPath\Bin" >> $env:GITHUB_PATH
+
+      - name: Install Vulkan SDK (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          version="${{ env.VULKAN_SDK_VERSION }}"
+          zipUrl="https://sdk.lunarg.com/sdk/download/$version/mac/vulkansdk-macos-$version.zip?Human=true"
+          zipPath="$RUNNER_TEMP/vulkan-sdk.zip"
+          extractPath="$RUNNER_TEMP/vulkan-sdk"
+          
+          echo "Downloading Vulkan SDK $version..."
+          curl -L --fail -o "$zipPath" "$zipUrl"
+          
+          echo "Extracting ZIP..."
+          unzip -q "$zipPath" -d "$extractPath"
+          
+          installerApp="$extractPath/vulkansdk-macOS-$version.app"
+          
+          if [ ! -d "$installerApp" ]; then
+            echo "Looking for installer app..."
+            find "$extractPath" -name "*.app" -type d
+            installerApp=$(find "$extractPath" -name "vulkansdk*.app" -type d | head -1)
+          fi
+          
+          echo "Installing Vulkan SDK from: $installerApp"
+          sudo "$installerApp/Contents/MacOS/vulkansdk-macOS-$version" \
+            --accept-licenses --default-answer --confirm-command install
+          
+          sdkPath="$HOME/VulkanSDK/$version/macOS"
+          echo "Vulkan SDK installed to: $sdkPath"
+          
+          # Verify installation
+          if [ ! -f "$sdkPath/include/vulkan/vulkan.h" ]; then
+            echo "ERROR: Vulkan SDK installation verification failed - headers not found"
+            echo "Checking what was installed:"
+            ls -la "$HOME/VulkanSDK/" || true
+            ls -la "$HOME/VulkanSDK/$version/" || true
+            exit 1
+          fi
+          
+          echo "Vulkan SDK installation verified successfully"
+          
+          # Set environment for subsequent steps
+          echo "VULKAN_SDK=$sdkPath" >> $GITHUB_ENV
+          echo "$sdkPath/bin" >> $GITHUB_PATH
 
       - name: Cache CMake dependencies (FetchContent)
         uses: actions/cache@v4
@@ -103,5 +197,3 @@ jobs:
 
       - name: Build
         run: cmake --build build-web-${{ matrix.build_type }} --parallel 4
-
-
