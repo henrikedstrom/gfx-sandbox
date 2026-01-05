@@ -8,6 +8,8 @@ set(gfx_application_sources
   Application.h
   Camera.cpp
   Camera.h
+  FrameTimer.cpp
+  FrameTimer.h
   OrbitControls.cpp
   OrbitControls.h
 )

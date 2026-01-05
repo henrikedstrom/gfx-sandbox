@@ -386,9 +386,16 @@ void WebgpuRenderer::Resize() {
     CreateDepthTexture();
     ConfigureSurface();
     _depthAttachment.view = _depthTextureView;
+    _surfaceDirty = false;
 }
 
 void WebgpuRenderer::Render(const glm::mat4& modelMatrix, const CameraUniformsInput& camera) {
+    // Reconfigure surface if vsync setting changed.
+    if (_surfaceDirty) {
+        ConfigureSurface();
+        _surfaceDirty = false;
+    }
+
     UpdateUniforms(modelMatrix, camera);
     SortTransparentMeshes(modelMatrix, camera.viewMatrix);
 
@@ -520,6 +527,18 @@ void WebgpuRenderer::SetEnvironment(const Environment& environment) {
     CreateGlobalBindGroup();
 }
 
+void WebgpuRenderer::SetVSyncEnabled(bool enabled) {
+    if (_vsyncEnabled != enabled) {
+        _vsyncEnabled = enabled;
+        _surfaceDirty = true;
+        WGPU_LOG_INFO("VSync {}", enabled ? "enabled" : "disabled");
+    }
+}
+
+bool WebgpuRenderer::IsVSyncEnabled() const {
+    return _vsyncEnabled;
+}
+
 void WebgpuRenderer::ReloadShaders() {
     _environmentPipeline = nullptr;
     _environmentShaderModule = nullptr;
@@ -567,11 +586,32 @@ void WebgpuRenderer::ConfigureSurface() {
     wgpu::SurfaceCapabilities capabilities;
     _surface.GetCapabilities(_adapter, &capabilities);
     _surfaceFormat = capabilities.formats[0];
+
+    // Determine desired present mode based on vsync setting.
+    // Note: On Windows, DWM may override Immediate mode in windowed apps.
+    wgpu::PresentMode desiredMode =
+        _vsyncEnabled ? wgpu::PresentMode::Fifo : wgpu::PresentMode::Immediate;
+
+    // Check if desired mode is supported, fall back to Fifo if not.
+    wgpu::PresentMode actualMode = wgpu::PresentMode::Fifo; // Always available
+    for (size_t i = 0; i < capabilities.presentModeCount; ++i) {
+        if (capabilities.presentModes[i] == desiredMode) {
+            actualMode = desiredMode;
+            break;
+        }
+    }
+
+    // Warn if VSync OFF was requested but Immediate isn't supported.
+    if (!_vsyncEnabled && actualMode != wgpu::PresentMode::Immediate) {
+        WGPU_LOG_WARNING("Present mode Immediate not supported, falling back to Fifo");
+    }
+
     wgpu::SurfaceConfiguration config{};
     config.device = _device;
     config.format = _surfaceFormat;
     config.width = width;
     config.height = height;
+    config.presentMode = actualMode;
     _surface.Configure(&config);
 }
 

@@ -96,6 +96,9 @@ void GltfViewerApp::SwitchToNextBackend() {
 
     std::cout << "Switching backend: " << _backendName << " -> " << nextBackend << std::endl;
 
+    // Capture current settings before destroying renderer.
+    bool vsyncEnabled = _renderer ? _renderer->IsVSyncEnabled() : true;
+
     // Release the current renderer (destructor handles cleanup).
     _renderer.reset();
 
@@ -107,7 +110,8 @@ void GltfViewerApp::SwitchToNextBackend() {
         return;
     }
 
-    // Set the current model and environment.
+    // Restore settings and set content.
+    _renderer->SetVSyncEnabled(vsyncEnabled);
     _renderer->SetEnvironment(_environment);
     _renderer->SetModel(_model);
 }
@@ -136,6 +140,8 @@ void GltfViewerApp::OnResize(int width, int height) {
 }
 
 void GltfViewerApp::OnKeyPressed(int key, int mods) {
+    Application::OnKeyPressed(key, mods);
+
     if (key == GLFW_KEY_A) {
         if (mods & GLFW_MOD_SHIFT) {
             _model.ResetOrientation();
@@ -144,14 +150,18 @@ void GltfViewerApp::OnKeyPressed(int key, int mods) {
         }
     } else if (key == GLFW_KEY_B) {
         SwitchToNextBackend();
-    } else if (key == GLFW_KEY_ESCAPE) {
-        RequestQuit();
     } else if (key == GLFW_KEY_R) {
         if (_renderer) {
             _renderer->ReloadShaders();
         }
     } else if (key == GLFW_KEY_HOME) {
         RepositionCamera(_camera, _model);
+    } else if (key == GLFW_KEY_V) {
+        if (_renderer) {
+            bool vsync = !_renderer->IsVSyncEnabled();
+            _renderer->SetVSyncEnabled(vsync);
+            std::cout << "VSync: " << (vsync ? "ON" : "OFF") << std::endl;
+        }
     }
 }
 

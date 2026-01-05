@@ -441,15 +441,25 @@ void VulkanRenderer::Resize() {
         // Wait for device to be idle before recreating resources.
         _core->GetDevice().waitIdle();
 
-        // Recreate swapchain-dependent resources.
-        _swapchain->Recreate(*_core, _window);
+        // Recreate swapchain-dependent resources with current vsync setting.
+        // Immediate = uncapped (may tear), Fifo = vsync on.
+        vk::PresentModeKHR presentMode =
+            _vsyncEnabled ? vk::PresentModeKHR::eFifo : vk::PresentModeKHR::eImmediate;
+        _swapchain->Recreate(*_core, _window, presentMode);
         CreateDepthResources();
         RecreateFramebuffers();
         UpdateSwapchainSyncObjects(); // Image count may have changed
+
+        _swapchainDirty = false;
     }
 }
 
 void VulkanRenderer::Render(const glm::mat4& modelMatrix, const CameraUniformsInput& camera) {
+    // Recreate swapchain if vsync setting changed.
+    if (_swapchainDirty) {
+        Resize();
+    }
+
     const auto device = _core->GetDevice();
 
     // Wait for the previous frame using this slot to finish.
@@ -730,6 +740,18 @@ void VulkanRenderer::SetEnvironment(const Environment& environment) {
 
     CreateEnvironmentTextures(environment);
     CreateGlobalDescriptorSets();
+}
+
+void VulkanRenderer::SetVSyncEnabled(bool enabled) {
+    if (_vsyncEnabled != enabled) {
+        _vsyncEnabled = enabled;
+        _swapchainDirty = true;
+        VK_LOG_INFO("VSync {}", enabled ? "enabled" : "disabled");
+    }
+}
+
+bool VulkanRenderer::IsVSyncEnabled() const {
+    return _vsyncEnabled;
 }
 
 void VulkanRenderer::ReloadShaders() {

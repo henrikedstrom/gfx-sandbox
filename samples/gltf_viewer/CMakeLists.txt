@@ -58,7 +58,7 @@ if(EMSCRIPTEN)
     -sALLOW_MEMORY_GROWTH=1
     --preload-file "${CMAKE_SOURCE_DIR}/assets@/assets"
     "-sEXPORTED_FUNCTIONS=[\"_wasm_OnDropFile\", \"_main\", \"_malloc\", \"_free\"]"
-    "-sEXPORTED_RUNTIME_METHODS=[\"ccall\", \"cwrap\", \"stringToUTF8\", \"lengthBytesUTF8\"]"
+    "-sEXPORTED_RUNTIME_METHODS=[\"ccall\", \"cwrap\", \"stringToUTF8\", \"lengthBytesUTF8\", \"HEAPU8\"]"
   )
 endif()
 

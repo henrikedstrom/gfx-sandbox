@@ -27,5 +27,8 @@ class IRenderer {
     virtual void SetModel(const Model& model) = 0;
     virtual void SetEnvironment(const Environment& environment) = 0;
 
+    virtual void SetVSyncEnabled(bool enabled) = 0;
+    virtual bool IsVSyncEnabled() const = 0;
+
     virtual void ReloadShaders() {}
 };

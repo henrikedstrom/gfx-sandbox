@@ -35,6 +35,8 @@ class WebgpuRenderer final : public IRenderer {
     void Render(const glm::mat4& modelMatrix, const CameraUniformsInput& camera) override;
     void SetModel(const Model& model) override;
     void SetEnvironment(const Environment& environment) override;
+    void SetVSyncEnabled(bool enabled) override;
+    bool IsVSyncEnabled() const override;
     void ReloadShaders() override;
 
   private:
@@ -173,4 +175,8 @@ class WebgpuRenderer final : public IRenderer {
 
     // Window reference for querying framebuffer size
     GLFWwindow* _window{nullptr};
+
+    // VSync state
+    bool _vsyncEnabled{true};
+    bool _surfaceDirty{false};
 };

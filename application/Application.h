@@ -7,6 +7,9 @@
 #include <chrono>
 #include <string>
 
+// Project Headers
+#include "FrameTimer.h"
+
 // Forward Declarations
 struct GLFWwindow;
 
@@ -36,12 +39,13 @@ class Application {
     GLFWwindow* GetWindow() const noexcept { return _window; }
     int GetWidth() const noexcept { return _framebufferWidth; }
     int GetHeight() const noexcept { return _framebufferHeight; }
+    const FrameTimer& GetFrameTimer() const noexcept { return _frameTimer; }
 
     // App hooks (override in derived apps)
     virtual void OnInit() {}
     virtual void OnFrame(float dtSeconds) = 0;
     virtual void OnResize([[maybe_unused]] int width, [[maybe_unused]] int height) {}
-    virtual void OnKeyPressed([[maybe_unused]] int key, [[maybe_unused]] int mods) {}
+    virtual void OnKeyPressed(int key, [[maybe_unused]] int mods);
     virtual void OnFileDropped([[maybe_unused]] const std::string& filename,
                                [[maybe_unused]] uint8_t* data = nullptr,
                                [[maybe_unused]] int length = 0) {}
@@ -50,14 +54,15 @@ class Application {
     // Private member functions
     void MainLoop();
     void ProcessFrame();
+    void ToggleFullscreen();
 
     // Static instance
     static Application* s_instance;
 
     // Private member variables
-    int _initialWindowWidth{0};   // Initial window size (screen coordinates, for creation only)
+    int _initialWindowWidth{0}; // Initial window size (screen coordinates, for creation only)
     int _initialWindowHeight{0};
-    int _framebufferWidth{0};     // Framebuffer size in pixels (for rendering)
+    int _framebufferWidth{0}; // Framebuffer size in pixels (for rendering)
     int _framebufferHeight{0};
     const char* _title{nullptr};
     bool _quitApp{false};
@@ -66,4 +71,14 @@ class Application {
     // Frame timing
     std::chrono::steady_clock::time_point _lastTime{};
     bool _hasLastTime{false};
+    FrameTimer _frameTimer;
+
+    // Fullscreen state
+    bool _isFullscreen{false};
+#if !defined(__EMSCRIPTEN__)
+    int _windowedPosX{0};
+    int _windowedPosY{0};
+    int _windowedWidth{0};
+    int _windowedHeight{0};
+#endif
 };

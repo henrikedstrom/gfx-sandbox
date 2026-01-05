@@ -7,7 +7,7 @@
 #
 # Backend options:
 #   -DENABLE_WEBGPU=ON/OFF  (default: ON)
-#   -DENABLE_VULKAN=ON/OFF  (default: OFF)
+#   -DENABLE_VULKAN=ON/OFF  (default: ON, auto-disabled for Emscripten)
 # ----------------------------------------------------------------------
 
 cmake_minimum_required(VERSION 3.22)
@@ -33,6 +33,12 @@ set(GFX_ROOT_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
 
 option(ENABLE_WEBGPU "Enable WebGPU (Dawn) renderer backend" ON)
 option(ENABLE_VULKAN "Enable Vulkan renderer backend" ON)
+
+# Vulkan is not available on web platforms - automatically disable it
+if(EMSCRIPTEN AND ENABLE_VULKAN)
+  message(STATUS "Disabling Vulkan backend (not available for Emscripten builds)")
+  set(ENABLE_VULKAN OFF CACHE BOOL "" FORCE)
+endif()
 
 if(NOT ENABLE_WEBGPU AND NOT ENABLE_VULKAN)
   message(FATAL_ERROR "At least one backend must be enabled: ENABLE_WEBGPU and/or ENABLE_VULKAN")

@@ -7,7 +7,7 @@
 
 | Feature | Notes |
 |---------|-------|
-| FPS Counter | Display in title bar and/or through ImGui overlay. |
+| FPS Counter | ✓ Display in title bar and/or through ImGui overlay. |
 | Logging System | Unify existing `VK_LOG_*`/`WGPU_LOG_*` macros into a shared system with levels, categories, and sinks. |
 | Dear ImGui | Integrate with WebGPU/Vulkan. |
 | Console Variables | Edit via ImGui panel initially. Support simple command parsing/execution. |
@@ -90,8 +90,8 @@ Move tonemapping out of fragment shader into a proper post-process pass. Enables
 |--------|-------|
 | Tonemapping | Already implemented in shader; move to post-process |
 | TAA | Temporal anti-aliasing |
-| SSAO | Screen-space ambient occlusion |
-| Bloom | Downsample + blur + composite |
+| SSAO | |
+| Bloom | |
 | Additional | DOF, motion blur, color grading, etc. (as needed) |
 
 ---

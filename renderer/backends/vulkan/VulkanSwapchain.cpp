@@ -65,15 +65,17 @@ const char* PresentModeToString(vk::PresentModeKHR mode) {
 }
 
 // Choose the best present mode.
-// Uses preferred mode from VulkanConfig.h, falls back to FIFO (always available).
-vk::PresentModeKHR ChoosePresentMode(const std::vector<vk::PresentModeKHR>& presentModes) {
+// Uses desired mode if available, falls back to FIFO (always available).
+vk::PresentModeKHR ChoosePresentMode(const std::vector<vk::PresentModeKHR>& presentModes,
+                                     vk::PresentModeKHR desiredMode) {
     for (const auto& mode : presentModes) {
-        if (mode == vkbackend::kPreferredPresentMode) {
+        if (mode == desiredMode) {
             VK_LOG_INFO("Present mode: {}", PresentModeToString(mode));
             return mode;
         }
     }
-    VK_LOG_INFO("Present mode: FIFO (fallback)");
+    VK_LOG_INFO("Present mode: FIFO (fallback, {} not available)",
+                PresentModeToString(desiredMode));
     return vk::PresentModeKHR::eFifo;
 }
 
@@ -107,7 +109,7 @@ vk::Extent2D ChooseExtent(const vk::SurfaceCapabilitiesKHR& capabilities, GLFWwi
 // Construction / Destruction
 
 VulkanSwapchain::VulkanSwapchain(const VulkanCore& core, GLFWwindow* window) {
-    CreateSwapchain(core, window);
+    CreateSwapchain(core, window, vk::PresentModeKHR::eFifo);
     CreateImageViews(core.GetRaiiDevice());
 
     VK_LOG_INFO("Swapchain created: {}x{}, {} images", _extent.width, _extent.height,
@@ -121,7 +123,8 @@ VulkanSwapchain::~VulkanSwapchain() {
 //----------------------------------------------------------------------
 // Swapchain Recreation
 
-void VulkanSwapchain::Recreate(const VulkanCore& core, GLFWwindow* window) {
+void VulkanSwapchain::Recreate(const VulkanCore& core, GLFWwindow* window,
+                               vk::PresentModeKHR presentMode) {
     // Wait for device to finish any ongoing operations
     core.GetDevice().waitIdle();
 
@@ -130,7 +133,7 @@ void VulkanSwapchain::Recreate(const VulkanCore& core, GLFWwindow* window) {
     _images.clear();
 
     // Create new swapchain and image views
-    CreateSwapchain(core, window);
+    CreateSwapchain(core, window, presentMode);
     CreateImageViews(core.GetRaiiDevice());
 
     VK_LOG_INFO("Swapchain recreated: {}x{}, {} images", _extent.width, _extent.height,
@@ -140,19 +143,21 @@ void VulkanSwapchain::Recreate(const VulkanCore& core, GLFWwindow* window) {
 //----------------------------------------------------------------------
 // Internal Creation Methods
 
-void VulkanSwapchain::CreateSwapchain(const VulkanCore& core, GLFWwindow* window) {
+void VulkanSwapchain::CreateSwapchain(const VulkanCore& core, GLFWwindow* window,
+                                      vk::PresentModeKHR desiredPresentMode) {
     // Query swapchain support details
     SwapchainSupportDetails support =
         QuerySwapchainSupport(core.GetPhysicalDevice(), core.GetSurface());
 
     // Choose optimal settings
     vk::SurfaceFormatKHR surfaceFormat = ChooseSurfaceFormat(support.formats);
-    vk::PresentModeKHR presentMode = ChoosePresentMode(support.presentModes);
+    vk::PresentModeKHR presentMode = ChoosePresentMode(support.presentModes, desiredPresentMode);
     vk::Extent2D extent = ChooseExtent(support.capabilities, window);
 
-    // Store format and extent for later use
+    // Store format, extent, and present mode for later use
     _imageFormat = surfaceFormat.format;
     _extent = extent;
+    _presentMode = presentMode;
 
     // Request one more image than the minimum to avoid waiting on the driver
     uint32_t imageCount = support.capabilities.minImageCount + 1;
@@ -256,4 +261,8 @@ const std::vector<vk::raii::ImageView>& VulkanSwapchain::GetImageViews() const {
 
 uint32_t VulkanSwapchain::GetImageCount() const {
     return static_cast<uint32_t>(_images.size());
+}
+
+vk::PresentModeKHR VulkanSwapchain::GetPresentMode() const {
+    return _presentMode;
 }

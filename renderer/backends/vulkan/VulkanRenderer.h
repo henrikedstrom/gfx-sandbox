@@ -37,6 +37,8 @@ class VulkanRenderer final : public IRenderer {
     void Render(const glm::mat4& modelMatrix, const CameraUniformsInput& camera) override;
     void SetModel(const Model& model) override;
     void SetEnvironment(const Environment& environment) override;
+    void SetVSyncEnabled(bool enabled) override;
+    bool IsVSyncEnabled() const override;
     void ReloadShaders() override;
 
   private:
@@ -168,6 +170,10 @@ class VulkanRenderer final : public IRenderer {
     std::unique_ptr<VulkanCore> _core;
     std::unique_ptr<VulkanSwapchain> _swapchain;
     GLFWwindow* _window{nullptr};
+
+    // VSync state
+    bool _vsyncEnabled{true};
+    bool _swapchainDirty{false};
 
     vk::raii::RenderPass _renderPass{nullptr};
     std::vector<vk::raii::Framebuffer> _framebuffers;

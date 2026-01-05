@@ -3,6 +3,7 @@
 
 // Standard Library Headers
 #include <cassert>
+#include <format>
 
 // Third-Party Library Headers
 #include <GLFW/glfw3.h>
@@ -222,5 +223,46 @@ void Application::ProcessFrame() {
     _lastTime = currentTime;
     _hasLastTime = true;
 
+    // Update FPS stats and refresh window title when stats are updated.
+    if (_frameTimer.Tick()) {
+        std::string title = std::format("{} - {:.1f} FPS", _title, _frameTimer.GetFps());
+        glfwSetWindowTitle(_window, title.c_str());
+    }
+
     OnFrame(deltaTimeMs * 0.001f);
+}
+
+void Application::OnKeyPressed(int key, [[maybe_unused]] int mods) {
+    if (key == GLFW_KEY_ESCAPE) {
+        if (_isFullscreen) {
+            ToggleFullscreen(); // Exit fullscreen first
+        } else {
+            RequestQuit();
+        }
+    } else if (key == GLFW_KEY_F) {
+#if !defined(__EMSCRIPTEN__)
+        ToggleFullscreen();
+#endif
+    }
+}
+
+void Application::ToggleFullscreen() {
+#if !defined(__EMSCRIPTEN__)
+    if (_isFullscreen) {
+        // Restore windowed mode
+        glfwSetWindowMonitor(_window, nullptr, _windowedPosX, _windowedPosY, _windowedWidth,
+                             _windowedHeight, 0);
+        _isFullscreen = false;
+    } else {
+        // Save windowed state
+        glfwGetWindowPos(_window, &_windowedPosX, &_windowedPosY);
+        glfwGetWindowSize(_window, &_windowedWidth, &_windowedHeight);
+
+        // Go exclusive fullscreen on primary monitor
+        GLFWmonitor* monitor = glfwGetPrimaryMonitor();
+        const GLFWvidmode* mode = glfwGetVideoMode(monitor);
+        glfwSetWindowMonitor(_window, monitor, 0, 0, mode->width, mode->height, mode->refreshRate);
+        _isFullscreen = true;
+    }
+#endif
 }

@@ -27,10 +27,6 @@ namespace vkbackend {
 
 constexpr const char* kModuleName = "Vulkan";
 
-// Swapchain Settings
-// TODO: Replace with cvar later
-constexpr vk::PresentModeKHR kPreferredPresentMode = vk::PresentModeKHR::eFifo;
-
 // Synchronization Settings
 constexpr uint32_t kMaxFramesInFlight = 2;
 
@@ -54,8 +50,8 @@ inline void LogWarning(std::string_view msg) {
 // Warning: formatted message with arguments
 template <typename... Args>
 inline void LogWarning(std::format_string<Args...> fmt, Args&&... args) {
-    std::cerr << "[" << kModuleName << "] Warning: " << std::format(fmt, std::forward<Args>(args)...)
-              << std::endl;
+    std::cerr << "[" << kModuleName
+              << "] Warning: " << std::format(fmt, std::forward<Args>(args)...) << std::endl;
 }
 
 // Error

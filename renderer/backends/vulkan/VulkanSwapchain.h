@@ -29,11 +29,13 @@ class VulkanSwapchain final {
     VulkanSwapchain(VulkanSwapchain&&) = delete;
     VulkanSwapchain& operator=(VulkanSwapchain&&) = delete;
 
-    // Recreate swapchain (e.g., on window resize).
-    void Recreate(const VulkanCore& core, GLFWwindow* window);
+    // Recreate swapchain (e.g., on window resize or present mode change).
+    void Recreate(const VulkanCore& core, GLFWwindow* window,
+                  vk::PresentModeKHR presentMode = vk::PresentModeKHR::eFifo);
 
     // Accessors
     vk::SwapchainKHR GetSwapchain() const;
+    vk::PresentModeKHR GetPresentMode() const;
     vk::Format GetImageFormat() const;
     vk::Extent2D GetExtent() const;
     const std::vector<vk::Image>& GetImages() const;
@@ -42,7 +44,8 @@ class VulkanSwapchain final {
 
   private:
     // Internal creation methods
-    void CreateSwapchain(const VulkanCore& core, GLFWwindow* window);
+    void CreateSwapchain(const VulkanCore& core, GLFWwindow* window,
+                         vk::PresentModeKHR desiredPresentMode);
     void CreateImageViews(const vk::raii::Device& device);
 
     // Swapchain and related resources
@@ -53,4 +56,5 @@ class VulkanSwapchain final {
     // Swapchain properties
     vk::Format _imageFormat{vk::Format::eUndefined};
     vk::Extent2D _extent{0, 0};
+    vk::PresentModeKHR _presentMode{vk::PresentModeKHR::eFifo};
 };
