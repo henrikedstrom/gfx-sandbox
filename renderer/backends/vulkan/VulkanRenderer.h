@@ -174,6 +174,7 @@ class VulkanRenderer final : public IRenderer {
     // VSync state
     bool _vsyncEnabled{true};
     bool _swapchainDirty{false};
+    bool _vsyncChangePending{false};
 
     vk::raii::RenderPass _renderPass{nullptr};
     std::vector<vk::raii::Framebuffer> _framebuffers;

@@ -446,6 +446,15 @@ void VulkanRenderer::Resize() {
         vk::PresentModeKHR presentMode =
             _vsyncEnabled ? vk::PresentModeKHR::eFifo : vk::PresentModeKHR::eImmediate;
         _swapchain->Recreate(*_core, _window, presentMode);
+
+#ifdef __APPLE__
+        // MoltenVK workaround: double-recreate on vsync toggle to avoid artifacts.
+        if (_vsyncChangePending) {
+            _swapchain->Recreate(*_core, _window, presentMode);
+            _vsyncChangePending = false;
+        }
+#endif
+
         CreateDepthResources();
         RecreateFramebuffers();
         UpdateSwapchainSyncObjects(); // Image count may have changed
@@ -746,6 +755,7 @@ void VulkanRenderer::SetVSyncEnabled(bool enabled) {
     if (_vsyncEnabled != enabled) {
         _vsyncEnabled = enabled;
         _swapchainDirty = true;
+        _vsyncChangePending = true;
         VK_LOG_INFO("VSync {}", enabled ? "enabled" : "disabled");
     }
 }
