@@ -27,7 +27,8 @@ CMake will automatically fetch Dawn, GLFW, and GLM.
 
 ```sh
 # Configure and build
-cmake -B build && cmake --build build -j8
+cmake -B build
+cmake --build build --parallel
 
 # Run one of the sample apps
 ./build/samples/gltf_viewer/gltf_viewer
@@ -39,7 +40,8 @@ Ensure your Emscripten environment is activated (`source emsdk_env.sh` or `emsdk
 
 ```sh
 # Configure and build with Emscripten
-emcmake cmake -B build-web && cmake --build build-web -j8
+emcmake cmake -B build-web
+cmake --build build-web --parallel
 
 # Run one of the sample apps (opens browser automatically)
 emrun build-web/samples/gltf_viewer/gltf_viewer.html
