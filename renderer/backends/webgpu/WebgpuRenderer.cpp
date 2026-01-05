@@ -392,7 +392,7 @@ void WebgpuRenderer::Resize() {
 void WebgpuRenderer::Render(const glm::mat4& modelMatrix, const CameraUniformsInput& camera) {
     // Reconfigure surface if vsync setting changed.
     if (_surfaceDirty) {
-        ConfigureSurface();
+        Resize(); // Recreate all swapchain resources.
         _surfaceDirty = false;
     }
 
