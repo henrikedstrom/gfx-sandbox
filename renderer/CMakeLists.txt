@@ -12,8 +12,6 @@ set(gfx_renderer_core_sources
   scene/Environment.h
   scene/MeshUtils.cpp
   scene/MeshUtils.h
-  scene/mikktspace.c
-  scene/mikktspace.h
   scene/Model.cpp
   scene/Model.h
 )
@@ -38,12 +36,9 @@ target_link_libraries(gfx_renderer_core PUBLIC
   glm
 )
 
-# mikktspace is third-party C code; silence warnings.
-if(MSVC)
-  set_source_files_properties(scene/mikktspace.c PROPERTIES COMPILE_OPTIONS "/W0")
-else()
-  set_source_files_properties(scene/mikktspace.c PROPERTIES COMPILE_OPTIONS "-w")
-endif()
+target_link_libraries(gfx_renderer_core PRIVATE
+  mikktspace
+)
 
 
 # ----------------------------------------------------------------------

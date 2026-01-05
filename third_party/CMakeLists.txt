@@ -53,6 +53,9 @@ if(NOT EMSCRIPTEN)
   set_directory_root_folder("${glfw_SOURCE_DIR}" "ThirdParty/glfw")
 endif()
 
+# MikkTSpace (tangent space generation, vendored)
+add_subdirectory(mikktspace)
+
 # Dawn / WebGPU (only fetched when WebGPU backend is enabled)
 if(ENABLE_WEBGPU)
   add_subdirectory(dawn EXCLUDE_FROM_ALL)
