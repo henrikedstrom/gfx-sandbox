@@ -43,6 +43,8 @@ When making changes, prefer patterns that will survive the planned refactors.
 - **Parameters/Locals:** `camelCase` — `modelMatrix`, `srcBuffer`
 
 ### File Structure
+
+**Header files (.h):**
 ```cpp
 /// @file  FileName.h
 /// @brief One-line description.
@@ -51,6 +53,7 @@ When making changes, prefer patterns that will survive the planned refactors.
 
 // Standard Library Headers
 #include <vector>
+#include <string>
 
 // Third-Party Library Headers
 #include <glm/glm.hpp>
@@ -61,6 +64,40 @@ When making changes, prefer patterns that will survive the planned refactors.
 // Forward Declarations
 class SomeClass;
 ```
+
+**Implementation files (.cpp):**
+```cpp
+// Class Header
+#include "FileName.h"
+
+// Standard Library Headers
+#include <algorithm>
+#include <format>
+
+// Third-Party Library Headers
+#include <GLFW/glfw3.h>
+
+// Project Headers
+#include "OtherClass.h"
+```
+
+**Include order rationale:**
+- **Headers:** Standard Library → Third-Party → Project → Forward Declarations
+  - Ensures headers are self-contained (standard library dependencies are included first)
+  - Most stable to least stable dependencies
+- **Implementation files:** Class Header first, then same order as headers
+  - Including your own header first catches missing includes in the header
+  - Same ordering for consistency
+
+**Angle brackets vs quotes:**
+- `<header>` — External dependencies: standard library, system headers, third-party libraries (GLFW, glm, Vulkan, etc.)
+- `"header"` — Project headers: files that are part of this codebase (`"logging/Log.h"`, `"IRenderer.h"`, etc.)
+
+**Include paths:**
+- Use include path-relative paths, not relative directory paths (`"../"`)
+- Since `core/` is in the include path, use `"logging/LogMessage.h"` not `"../LogMessage.h"`
+- This makes includes explicit, portable, and consistent across the codebase
+- Example: From `core/logging/sinks/ISink.h`, use `"logging/LogMessage.h"` not `"../LogMessage.h"`
 
 ### Class Structure
 1. Public interface first, then protected, then private
@@ -91,7 +128,11 @@ class SomeClass;
   //----------------------------------------------------------------------
   // Section Name
   ```
-- **Use `/// @file` + `/// @brief`** at the top of header files for file-level documentation
+- **File headers:** Use `/// @file` + `/// @brief` at the top of header files
+- **Class/type documentation:** Use `///` for class, struct, and enum documentation (single or multi-line)
+- **Function documentation:** Do not use `///` comments for individual functions in headers. Regular `//` comments are acceptable only when the function name and signature are not self-documenting enough
+- **Enum values:** Use regular `//` comments for enum value documentation, not `///<`
+- **Section comments:** Use `//` for section headers like `// Public Interface`, `// Accessors`, `// Private Member Functions`
 - **Comment workarounds and non-obvious decisions** — future readers need context
 
 ## Error Handling
@@ -121,6 +162,10 @@ Keep Vulkan and WebGPU backends structurally similar where possible:
 - **Clarify before changing behavior:** If a change affects rendering output or performance, ask for confirmation unless fixing an obvious bug
 - **When in doubt, ask:** Clarifying questions before implementing beats rework after
 - **Plan before implementing:** For medium+ changes, propose a plan and get agreement before starting
+- **Stop and ask on design conflicts:** When encountering issues that require changing agreed-upon designs (namespace names, API signatures, class hierarchies), present options rather than picking one. Examples:
+  - Name conflicts (e.g., namespace collides with standard library)
+  - Interface changes that affect usage patterns
+  - Architectural pivots due to technical constraints
 
 **Change scale guide:**
 | Scale | Examples | Approach |
@@ -151,6 +196,11 @@ Graphics-specific concerns that compile but can still be wrong:
 ## Tooling
 
 - **`.clang-format`:** Defines formatting — do not change format rules unless requested
+  - **Formatting scope:** Only format files in `application/`, `core/`, `renderer/`, and `samples/` directories
+  - **Do NOT format:** `third_party/`, `build/`, `build-*/`, or any `_deps/` directories
+  - **Commands:**
+    - **PowerShell (Windows):** `Get-ChildItem -Path application,core,renderer,samples -Include *.cpp,*.h,*.hpp -Recurse | ForEach-Object { clang-format -i $_.FullName }`
+    - **Bash/sh (Linux/macOS):** `find application core renderer samples -type f \( -name "*.cpp" -o -name "*.h" -o -name "*.hpp" \) -exec clang-format -i {} +`
 - **`.clang-tidy`:** Follow its rules; treat warnings in touched code as errors
 - **Compiler warnings:** No new warnings in touched modules
 
