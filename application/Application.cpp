@@ -90,7 +90,8 @@ static void EmscriptenSetDropCallback() {
                     'wasm_OnDropFile',
                     'void',
                     ['number', 'number', 'number'],
-                    [filenamePtr, dataPtr, data.length]
+                    [filenamePtr, dataPtr, data.length],
+                    {async: true}
                 );
 
                 Module._free(dataPtr);
