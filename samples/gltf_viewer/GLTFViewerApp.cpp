@@ -4,7 +4,6 @@
 // Standard Library Headers
 #include <algorithm>
 #include <cctype>
-#include <iostream>
 #include <string_view>
 
 // Third-Party Library Headers
@@ -14,6 +13,7 @@
 #include "BackendRegistry.h"
 #include "application/Camera.h"
 #include "application/OrbitControls.h"
+#include "logging/Log.h"
 
 namespace {
 
@@ -64,7 +64,7 @@ void GltfViewerApp::OnInit() {
     // Create renderer via backend registry.
     _renderer = BackendRegistry::Instance().Create(_backendName, GetWindow());
     if (!_renderer) {
-        std::cerr << "Failed to create renderer. Exiting." << std::endl;
+        Log::Fatal(Log::Application, "Failed to create renderer, exiting");
         RequestQuit();
         return;
     }
@@ -82,7 +82,7 @@ void GltfViewerApp::SwitchToNextBackend() {
     // Get available backends and find the next one in the cycle.
     auto backends = BackendRegistry::Instance().GetAvailableBackends();
     if (backends.size() <= 1) {
-        std::cout << "No other backends available to switch to." << std::endl;
+        Log::Info(Log::Application, "No other backends available to switch to");
         return;
     }
 
@@ -94,7 +94,7 @@ void GltfViewerApp::SwitchToNextBackend() {
         nextBackend = *it;
     }
 
-    std::cout << "Switching backend: " << _backendName << " -> " << nextBackend << std::endl;
+    Log::Info(Log::Application, "Switching backend: {} -> {}", _backendName, nextBackend);
 
     // Capture current settings before destroying renderer.
     bool vsyncEnabled = _renderer ? _renderer->IsVSyncEnabled() : true;
@@ -106,7 +106,7 @@ void GltfViewerApp::SwitchToNextBackend() {
     _backendName = nextBackend;
     _renderer = BackendRegistry::Instance().Create(_backendName, GetWindow());
     if (!_renderer) {
-        std::cerr << "Failed to create renderer for backend: " << _backendName << std::endl;
+        Log::Error(Log::Application, "Failed to create renderer for backend: {}", _backendName);
         return;
     }
 
@@ -160,7 +160,6 @@ void GltfViewerApp::OnKeyPressed(int key, int mods) {
         if (_renderer) {
             bool vsync = !_renderer->IsVSyncEnabled();
             _renderer->SetVSyncEnabled(vsync);
-            std::cout << "VSync: " << (vsync ? "ON" : "OFF") << std::endl;
         }
     }
 }
@@ -172,19 +171,19 @@ void GltfViewerApp::OnFileDropped(const std::string& filename, uint8_t* data, in
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 
     if (extension == "glb" || extension == "gltf") {
-        std::cout << "Loading model: " << filename << std::endl;
+        Log::Info(Log::Application, "Loading model: {}", filename);
         _model.Load(filename, data, static_cast<uint32_t>(length));
         RepositionCamera(_camera, _model);
         if (_renderer) {
             _renderer->SetModel(_model);
         }
     } else if (extension == "hdr") {
-        std::cout << "Loading environment: " << filename << std::endl;
+        Log::Info(Log::Application, "Loading environment: {}", filename);
         _environment.Load(filename, data, static_cast<uint32_t>(length));
         if (_renderer) {
             _renderer->SetEnvironment(_environment);
         }
     } else {
-        std::cerr << "Unsupported file type: " << filename << std::endl;
+        Log::Warning(Log::Application, "Unsupported file type: {}", filename);
     }
 }

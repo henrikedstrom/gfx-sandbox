@@ -1,11 +1,11 @@
 // Class Header
 #include "MeshUtils.h"
 
-// Standard Library Headers
-#include <iostream>
-
 // Third-Party Library Headers
 #include "mikktspace.h"
+
+// Project Headers
+#include "logging/Log.h"
 
 //----------------------------------------------------------------------
 // Internal Types and Utility Functions
@@ -118,7 +118,7 @@ void GenerateTangents(const Model::SubMesh& subMesh, std::vector<Model::Vertex>&
     context.m_pInterface = &interface;
 
     if (!genTangSpaceDefault(&context)) {
-        std::cerr << "Failed to generate tangents!" << std::endl;
+        Log::Error(Log::Scene, "Failed to generate tangents");
     }
 }
 

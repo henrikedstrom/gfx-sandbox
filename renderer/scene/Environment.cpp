@@ -5,7 +5,6 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
-#include <iostream>
 
 // Third-Party Library Headers
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
@@ -14,14 +13,16 @@
 #include <glm/glm.hpp>
 #include <stb_image.h>
 
+// Project Headers
+#include "logging/Log.h"
+
 // ----------------------------------------------------------------------
 // Internal
 
 namespace {
 
 void DownsampleTexture(Environment::Texture& texture, int origWidth, int origHeight) {
-    std::cout << "Downsampling texture from " << origWidth << "x" << origHeight << " to 4096x2048."
-              << std::endl;
+    Log::Info(Log::Scene, "Downsampling texture from {}x{} to 4096x2048", origWidth, origHeight);
     auto start = std::chrono::steady_clock::now();
 
     const uint32_t newWidth = 4096;
@@ -54,8 +55,8 @@ void DownsampleTexture(Environment::Texture& texture, int origWidth, int origHei
     }
 
     auto end = std::chrono::steady_clock::now();
-    std::chrono::duration<double> elapsed = end - start;
-    std::cout << "Downsampling took " << elapsed.count() << " seconds." << std::endl;
+    double elapsedMs = std::chrono::duration<double, std::milli>(end - start).count();
+    Log::Info(Log::Scene, "Downsampling took {:.1f}ms", elapsedMs);
 
     texture._width = newWidth;
     texture._height = newHeight;
@@ -73,14 +74,14 @@ bool LoadFromSource(Environment::Texture& texture, LoaderFunc loader, Args&&... 
     float* data = loader(std::forward<Args>(args)..., &width, &height, &channels, 4);
 
     if (!data) {
-        std::cerr << "Failed to load image." << std::endl;
-        std::cerr << "stb_image failure: " << stbi_failure_reason() << std::endl;
+        Log::Error(Log::Scene, "Failed to load image");
+        Log::Error(Log::Scene, "stb_image failure: {}", stbi_failure_reason());
         return false;
     }
 
     if (width != 2 * height) {
-        std::cerr << "Error: Texture must have a 2:1 aspect ratio. Received: " << width << "x"
-                  << height << std::endl;
+        Log::Error(Log::Scene, "Texture must have a 2:1 aspect ratio, received: {}x{}", width,
+                   height);
         stbi_image_free(data);
         return false;
     }
@@ -93,8 +94,8 @@ bool LoadFromSource(Environment::Texture& texture, LoaderFunc loader, Args&&... 
 
     auto t1 = std::chrono::steady_clock::now();
     double durationMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
-    std::cout << "Loaded environment texture (" << width << "x" << height << ")"
-              << " in " << durationMs << "ms" << std::endl;
+    Log::Info(Log::Scene, "Loaded environment texture ({}x{}) in {:.1f}ms", width, height,
+              durationMs);
 
     stbi_image_free(data);
 

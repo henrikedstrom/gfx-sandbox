@@ -36,7 +36,7 @@ shaderc_shader_kind ToShadercKind(ShaderKind kind) {
 std::optional<std::string> LoadTextFile(const std::filesystem::path& filepath) {
     std::ifstream file(filepath);
     if (!file.is_open()) {
-        VK_LOG_ERROR("Failed to open shader source file: {}", filepath.string());
+        Log::Error(Log::Vulkan, "Failed to open shader source file: {}", filepath.string());
         return std::nullopt;
     }
 
@@ -81,7 +81,7 @@ std::optional<ShaderKind> InferShaderKind(const std::filesystem::path& filepath)
         return ShaderKind::TessEvaluation;
     }
 
-    VK_LOG_ERROR("Unknown shader extension: {}", ext);
+    Log::Error(Log::Vulkan, "Unknown shader extension: {}", ext);
     return std::nullopt;
 }
 
@@ -103,18 +103,19 @@ std::optional<std::vector<uint32_t>> CompileGLSL(std::string_view source, Shader
                                   std::string(filename).c_str(), entryPoint, options);
 
     if (result.GetCompilationStatus() != shaderc_compilation_status_success) {
-        VK_LOG_ERROR("Shader compilation failed for '{}':\n{}", filename, result.GetErrorMessage());
+        Log::Error(Log::Vulkan, "Shader compilation failed for '{}':\n{}", filename,
+                   result.GetErrorMessage());
         return std::nullopt;
     }
 
     // Log warnings if any.
     if (result.GetNumWarnings() > 0) {
-        VK_LOG_WARNING("Shader '{}' compiled with {} warning(s):\n{}", filename,
-                       result.GetNumWarnings(), result.GetErrorMessage());
+        Log::Warning(Log::Vulkan, "Shader '{}' compiled with {} warning(s):\n{}", filename,
+                     result.GetNumWarnings(), result.GetErrorMessage());
     }
 
-    VK_LOG_INFO("Compiled shader: {} ({} SPIR-V words)", filename,
-                std::distance(result.begin(), result.end()));
+    Log::Debug(Log::Vulkan, "Compiled shader: {} ({} SPIR-V words)", filename,
+               std::distance(result.begin(), result.end()));
 
     return std::vector<uint32_t>(result.begin(), result.end());
 }

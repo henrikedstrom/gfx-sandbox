@@ -3,10 +3,10 @@
 
 // Standard Library Headers
 #include <exception>
-#include <iostream>
 
 // Project Headers
 #include "IRenderer.h"
+#include "logging/Log.h"
 
 BackendRegistry& BackendRegistry::Instance() {
     static BackendRegistry instance;
@@ -15,20 +15,20 @@ BackendRegistry& BackendRegistry::Instance() {
 
 bool BackendRegistry::Register(const std::string& name, FactoryFunc factory) {
     if (_factories.contains(name)) {
-        std::cerr << "[BackendRegistry] Backend '" << name << "' already registered." << std::endl;
+        Log::Warning(Log::Renderer, "Backend '{}' already registered", name);
         return false;
     }
 
     _factories[name] = std::move(factory);
-    std::cout << "[BackendRegistry] Registered backend: " << name << std::endl;
+    Log::Info(Log::Renderer, "Registered backend: {}", name);
     return true;
 }
 
 std::unique_ptr<IRenderer> BackendRegistry::Create(const std::string& name,
-                                                    GLFWwindow* window) const {
+                                                   GLFWwindow* window) const {
     // Check if any backends are registered
     if (_factories.empty()) {
-        std::cerr << "[BackendRegistry] No backends registered." << std::endl;
+        Log::Error(Log::Renderer, "No backends registered");
         return nullptr;
     }
 
@@ -36,7 +36,7 @@ std::unique_ptr<IRenderer> BackendRegistry::Create(const std::string& name,
     std::string backendName = name.empty() ? _defaultBackend : name;
 
     if (backendName.empty()) {
-        std::cerr << "[BackendRegistry] No backend specified and no default configured." << std::endl;
+        Log::Error(Log::Renderer, "No backend specified and no default configured");
         return nullptr;
     }
 
@@ -47,12 +47,11 @@ std::unique_ptr<IRenderer> BackendRegistry::Create(const std::string& name,
             return nullptr;
         }
 
-        std::cout << "[BackendRegistry] Creating backend: " << backendName << std::endl;
+        Log::Info(Log::Renderer, "Creating backend: {}", backendName);
         try {
             return it->second(window);
         } catch (const std::exception& e) {
-            std::cerr << "[BackendRegistry] Failed to create '" << backendName << "': " << e.what()
-                      << std::endl;
+            Log::Error(Log::Renderer, "Failed to create '{}': {}", backendName, e.what());
             return nullptr;
         }
     };
@@ -64,8 +63,7 @@ std::unique_ptr<IRenderer> BackendRegistry::Create(const std::string& name,
 
     // 2. Try the default backend (if different from requested).
     if (backendName != _defaultBackend && !_defaultBackend.empty()) {
-        std::cout << "[BackendRegistry] Falling back to default backend: " << _defaultBackend
-                  << std::endl;
+        Log::Info(Log::Renderer, "Falling back to default backend: {}", _defaultBackend);
         if (auto renderer = tryCreate(_defaultBackend)) {
             return renderer;
         }
@@ -77,13 +75,13 @@ std::unique_ptr<IRenderer> BackendRegistry::Create(const std::string& name,
             continue; // Already tried these
         }
 
-        std::cout << "[BackendRegistry] Trying fallback backend: " << fallbackName << std::endl;
+        Log::Info(Log::Renderer, "Trying fallback backend: {}", fallbackName);
         if (auto renderer = tryCreate(fallbackName)) {
             return renderer;
         }
     }
 
-    std::cerr << "[BackendRegistry] All backends failed to initialize." << std::endl;
+    Log::Error(Log::Renderer, "All backends failed to initialize");
     return nullptr;
 }
 

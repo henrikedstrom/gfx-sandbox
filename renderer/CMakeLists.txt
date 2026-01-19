@@ -33,6 +33,7 @@ target_include_directories(gfx_renderer_core SYSTEM PUBLIC
 
 target_link_libraries(gfx_renderer_core PUBLIC
   gfx_build_options
+  core
   glm
 )
 

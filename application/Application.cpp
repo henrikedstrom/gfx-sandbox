@@ -4,12 +4,18 @@
 // Standard Library Headers
 #include <cassert>
 #include <format>
+#include <memory>
 
 // Third-Party Library Headers
 #include <GLFW/glfw3.h>
 #if defined(__EMSCRIPTEN__)
 #include <emscripten/emscripten.h>
 #endif
+
+// Project Headers
+#include "logging/Log.h"
+#include "logging/sinks/DebuggerSink.h"
+#include "logging/sinks/StdoutSink.h"
 
 Application* Application::s_instance = nullptr;
 
@@ -130,6 +136,18 @@ void Application::RequestQuit() noexcept {
 }
 
 void Application::Run() {
+    // Initialize logging system
+    auto& logMgr = Log::LogManager::Instance();
+#if defined(__EMSCRIPTEN__)
+    // For Emscripten: only use DebuggerSink (browser console)
+    // StdoutSink would duplicate output and doesn't work well in browser
+    logMgr.AddSink(std::make_unique<Log::DebuggerSink>());
+#else
+    // For native builds: use both stdout and IDE debugger
+    logMgr.AddSink(std::make_unique<Log::StdoutSink>());
+    logMgr.AddSink(std::make_unique<Log::DebuggerSink>());
+#endif
+
     if (!glfwInit()) {
         return;
     }

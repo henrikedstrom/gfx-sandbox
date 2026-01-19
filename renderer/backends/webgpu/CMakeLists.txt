@@ -50,6 +50,7 @@ target_include_directories(gfx_renderer_webgpu PUBLIC
 
 target_link_libraries(gfx_renderer_webgpu PUBLIC
   gfx_build_options
+  core
   gfx_renderer_core
   glm
 )

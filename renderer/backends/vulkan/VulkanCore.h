@@ -62,4 +62,3 @@ class VulkanCore final {
     uint32_t _graphicsQueueFamily{0};
     uint32_t _presentQueueFamily{0};
 };
-

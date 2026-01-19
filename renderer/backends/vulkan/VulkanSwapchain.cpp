@@ -70,12 +70,12 @@ vk::PresentModeKHR ChoosePresentMode(const std::vector<vk::PresentModeKHR>& pres
                                      vk::PresentModeKHR desiredMode) {
     for (const auto& mode : presentModes) {
         if (mode == desiredMode) {
-            VK_LOG_INFO("Present mode: {}", PresentModeToString(mode));
+            Log::Debug(Log::Vulkan, "Present mode: {}", PresentModeToString(mode));
             return mode;
         }
     }
-    VK_LOG_INFO("Present mode: FIFO (fallback, {} not available)",
-                PresentModeToString(desiredMode));
+    Log::Debug(Log::Vulkan, "Present mode: FIFO (fallback, {} not available)",
+               PresentModeToString(desiredMode));
     return vk::PresentModeKHR::eFifo;
 }
 
@@ -112,12 +112,12 @@ VulkanSwapchain::VulkanSwapchain(const VulkanCore& core, GLFWwindow* window) {
     CreateSwapchain(core, window, vk::PresentModeKHR::eFifo);
     CreateImageViews(core.GetRaiiDevice());
 
-    VK_LOG_INFO("Swapchain created: {}x{}, {} images", _extent.width, _extent.height,
-                static_cast<uint32_t>(_images.size()));
+    Log::Debug(Log::Vulkan, "Swapchain created: {}x{}, {} images", _extent.width, _extent.height,
+               static_cast<uint32_t>(_images.size()));
 }
 
 VulkanSwapchain::~VulkanSwapchain() {
-    VK_LOG_INFO("Swapchain destroyed.");
+    Log::Debug(Log::Vulkan, "Swapchain destroyed");
 }
 
 //----------------------------------------------------------------------
@@ -136,8 +136,8 @@ void VulkanSwapchain::Recreate(const VulkanCore& core, GLFWwindow* window,
     CreateSwapchain(core, window, presentMode);
     CreateImageViews(core.GetRaiiDevice());
 
-    VK_LOG_INFO("Swapchain recreated: {}x{}, {} images", _extent.width, _extent.height,
-                static_cast<uint32_t>(_images.size()));
+    Log::Debug(Log::Vulkan, "Swapchain recreated: {}x{}, {} images", _extent.width, _extent.height,
+               static_cast<uint32_t>(_images.size()));
 }
 
 //----------------------------------------------------------------------

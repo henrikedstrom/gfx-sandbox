@@ -12,7 +12,8 @@
 
 VulkanEnvironmentPreprocessor::VulkanEnvironmentPreprocessor(VulkanCore& core,
                                                              vk::raii::CommandPool& commandPool) :
-    _core(core), _commandPool(commandPool) {
+    _core(core),
+    _commandPool(commandPool) {
     InitSampler();
     InitUniformBuffers();
     InitDescriptorSetLayouts();

@@ -36,6 +36,7 @@ target_include_directories(gfx_renderer_vulkan PUBLIC
 
 target_link_libraries(gfx_renderer_vulkan PUBLIC
   gfx_build_options
+  core
   gfx_renderer_core
   Vulkan::Vulkan
   Vulkan::shaderc_combined

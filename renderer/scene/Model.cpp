@@ -2,7 +2,6 @@
 #include "Model.h"
 
 // Standard Library Headers
-#include <iostream>
 #include <limits>
 
 // Third-Party Library Headers
@@ -18,6 +17,7 @@
 
 // Project Headers
 #include "MeshUtils.h"
+#include "logging/Log.h"
 
 //----------------------------------------------------------------------
 // Internal Constants and Utility Functions
@@ -199,8 +199,8 @@ void ProcessMesh(const tinygltf::Model& model, const tinygltf::Mesh& mesh,
                 indexBuffer.data.data() + indexBufferView.byteOffset + indexAccessor.byteOffset;
 
             if (indexAccessor.count > std::numeric_limits<uint32_t>::max()) {
-                std::cerr << "Error: Index accessor count exceeds 32-bit limit: "
-                          << indexAccessor.count << std::endl;
+                Log::Error(Log::Scene, "Index accessor count exceeds 32-bit limit: {}",
+                           indexAccessor.count);
                 subMesh._indexCount = std::numeric_limits<uint32_t>::max();
             } else {
                 subMesh._indexCount = static_cast<uint32_t>(indexAccessor.count);
@@ -227,8 +227,8 @@ void ProcessMesh(const tinygltf::Model& model, const tinygltf::Mesh& mesh,
         } else {
             // Non-indexed mesh: generate sequential indices.
             if (positionAccessor.count > std::numeric_limits<uint32_t>::max()) {
-                std::cerr << "Error: Position accessor count exceeds 32-bit limit: "
-                          << positionAccessor.count << std::endl;
+                Log::Error(Log::Scene, "Position accessor count exceeds 32-bit limit: {}",
+                           positionAccessor.count);
                 subMesh._indexCount = std::numeric_limits<uint32_t>::max();
             } else {
                 subMesh._indexCount = static_cast<uint32_t>(positionAccessor.count);
@@ -241,7 +241,7 @@ void ProcessMesh(const tinygltf::Model& model, const tinygltf::Mesh& mesh,
 
         if (!tangentData) {
             // Generate tangents if not provided.
-            std::cout << "Generating tangents for submesh " << subMeshes.size() << std::endl;
+            Log::Debug(Log::Scene, "Generating tangents for submesh {}", subMeshes.size());
             mesh_utils::GenerateTangents(subMesh, vertices, indices);
         }
 
@@ -351,11 +351,10 @@ void ProcessImage(const tinygltf::Image& image, const std::string& basePath,
             texture._data = std::vector<uint8_t>(data, data + (width * height * components));
             stbi_image_free(data);
         } else {
-            std::cerr << "Failed to load image: " << imagePath << std::endl;
+            Log::Error(Log::Scene, "Failed to load image: {}", imagePath);
         }
     } else {
-        std::cerr << "Warning: Texture " << texture._name << " has no valid image source."
-                  << std::endl;
+        Log::Warning(Log::Scene, "Texture {} has no valid image source", texture._name);
     }
 
     textures.push_back(texture);
@@ -410,7 +409,7 @@ void Model::Load(const std::string& filename, const uint8_t* data, uint32_t size
         } else if (extension == "glb") {
             result = loader.LoadBinaryFromFile(&model, &err, &warn, filename);
         } else {
-            std::cerr << "Unsupported file format: " << extension << std::endl;
+            Log::Error(Log::Scene, "Unsupported file format: {}", extension);
             return;
         }
     }
@@ -424,10 +423,10 @@ void Model::Load(const std::string& filename, const uint8_t* data, uint32_t size
         auto t2 = std::chrono::steady_clock::now();
         double totalMs = std::chrono::duration<double, std::milli>(t2 - t0).count();
         double processMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
-        std::cout << "Loaded model in " << totalMs << "ms (processing took: " << processMs << "ms)"
-                  << std::endl;
+        Log::Info(Log::Scene, "Loaded model in {:.1f}ms (processing took: {:.1f}ms)", totalMs,
+                  processMs);
     } else {
-        std::cerr << "Failed to load model: " << err << std::endl;
+        Log::Error(Log::Scene, "Failed to load model: {}", err);
     }
 }
 

@@ -2,7 +2,6 @@
 #include "MipmapGenerator.h"
 
 // Standard Library Headers
-#include <iostream>
 #include <string>
 #include <vector>
 

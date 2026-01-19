@@ -3,8 +3,12 @@
 
 // Standard Library Headers
 #include <algorithm>
+#include <format>
 #include <memory>
+#include <optional>
+#include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 // Third-Party Library Headers
@@ -199,6 +203,68 @@ void CreateEnvironmentTexture(wgpu::Device device, wgpu::TextureViewDimension ty
 /// No-op callback for queue work completion - used only to wait on the returned future.
 void OnQueueWorkDone(wgpu::QueueWorkDoneStatus /*status*/, const char* /*message*/) {}
 
+// Helper to convert backend type to string
+const char* BackendTypeToString(wgpu::BackendType type) {
+    switch (type) {
+    case wgpu::BackendType::Null:
+        return "Null";
+    case wgpu::BackendType::WebGPU:
+        return "WebGPU";
+    case wgpu::BackendType::D3D11:
+        return "D3D11";
+    case wgpu::BackendType::D3D12:
+        return "D3D12";
+    case wgpu::BackendType::Metal:
+        return "Metal";
+    case wgpu::BackendType::Vulkan:
+        return "Vulkan";
+    case wgpu::BackendType::OpenGL:
+        return "OpenGL";
+    case wgpu::BackendType::OpenGLES:
+        return "OpenGL ES";
+    default:
+        return "Unknown";
+    }
+}
+
+// Helper to convert adapter type to string
+const char* AdapterTypeToString(wgpu::AdapterType type) {
+    switch (type) {
+    case wgpu::AdapterType::DiscreteGPU:
+        return "Discrete GPU";
+    case wgpu::AdapterType::IntegratedGPU:
+        return "Integrated GPU";
+    case wgpu::AdapterType::CPU:
+        return "CPU";
+    case wgpu::AdapterType::Unknown:
+    default:
+        return "Unknown";
+    }
+}
+
+// Query and format adapter information
+std::string GetAdapterInfoString(const wgpu::Adapter& adapter) {
+    wgpu::AdapterInfo info{};
+    adapter.GetInfo(&info);
+
+    // Use device name if available, fallback to description
+    std::string deviceName = "Unknown Device";
+    std::string_view deviceView = info.device;
+    if (!deviceView.empty()) {
+        deviceName = std::string(deviceView);
+    } else {
+        std::string_view descView = info.description;
+        if (!descView.empty()) {
+            deviceName = std::string(descView);
+        }
+    }
+
+    const char* backendName = BackendTypeToString(info.backendType);
+    const char* adapterTypeName = AdapterTypeToString(info.adapterType);
+
+    return std::format("{} ({}, Backend: {})", deviceName, adapterTypeName, backendName);
+}
+
 } // namespace
 
 //----------------------------------------------------------------------
@@ -226,20 +292,34 @@ WebgpuRenderer::WebgpuRenderer(GLFWwindow* window) : _window(window) {
     adapterOptions.compatibleSurface = _surface;
     adapterOptions.powerPreference = wgpu::PowerPreference::HighPerformance;
 
+    std::optional<std::string> adapterError;
     wgpu::Future adapterFuture = _instance.RequestAdapter(
         &adapterOptions, wgpu::CallbackMode::WaitAnyOnly,
-        [this](wgpu::RequestAdapterStatus status, wgpu::Adapter adapter, wgpu::StringView message) {
+        [this, &adapterError](wgpu::RequestAdapterStatus status, wgpu::Adapter adapter, wgpu::StringView message) {
             const std::string_view msg = message;
             if (!msg.empty()) {
-                WGPU_LOG_WARNING("RequestAdapter: {}", msg);
+                Log::Warning(Log::WebGPU, "RequestAdapter: {}", msg);
             }
             if (status != wgpu::RequestAdapterStatus::Success) {
-                WGPU_LOG_ERROR("Failed to request adapter.");
-                std::exit(EXIT_FAILURE);
+                if (!msg.empty()) {
+                    adapterError = std::string("Failed to request adapter: ") + std::string(msg);
+                } else {
+                    adapterError = "Failed to request adapter";
+                }
+                return;
             }
             _adapter = std::move(adapter);
         });
     _instance.WaitAny(adapterFuture, UINT64_MAX);
+
+    if (adapterError.has_value()) {
+        Log::Error(Log::WebGPU, "{}", adapterError.value());
+        throw std::runtime_error(adapterError.value());
+    }
+
+    // Log adapter selection with device info, adapter type, and backend
+    std::string adapterInfo = GetAdapterInfoString(_adapter);
+    Log::Info(Log::WebGPU, "Selected adapter: {}", adapterInfo);
 
     wgpu::DeviceDescriptor deviceDesc{};
 
@@ -250,7 +330,7 @@ WebgpuRenderer::WebgpuRenderer(GLFWwindow* window) : _window(window) {
         requiredLimits.maxBufferSize = std::max(requiredLimits.maxBufferSize, oneGiB);
         deviceDesc.requiredLimits = &requiredLimits;
     } else {
-        WGPU_LOG_WARNING("Failed to query adapter limits; using default device limits.");
+        Log::Warning(Log::WebGPU, "Failed to query adapter limits; using default device limits");
     }
 
     deviceDesc.SetDeviceLostCallback(
@@ -259,7 +339,7 @@ WebgpuRenderer::WebgpuRenderer(GLFWwindow* window) : _window(window) {
             // Destroyed and CallbackCancelled are expected during normal shutdown.
             if (reason == wgpu::DeviceLostReason::Destroyed ||
                 reason == wgpu::DeviceLostReason::CallbackCancelled) {
-                WGPU_LOG_INFO("Device released.");
+                Log::Info(Log::WebGPU, "Device released");
                 return;
             }
 
@@ -277,33 +357,42 @@ WebgpuRenderer::WebgpuRenderer(GLFWwindow* window) : _window(window) {
                 break;
             }
             if (!msg.empty()) {
-                WGPU_LOG_ERROR("Device lost: [Reason: {}] - {}", reasonStr, msg);
+                Log::Error(Log::WebGPU, "Device lost: [Reason: {}] - {}", reasonStr, msg);
             } else {
-                WGPU_LOG_ERROR("Device lost: [Reason: {}]", reasonStr);
+                Log::Error(Log::WebGPU, "Device lost: [Reason: {}]", reasonStr);
             }
         });
 
     deviceDesc.SetUncapturedErrorCallback(
         [](const wgpu::Device&, wgpu::ErrorType errorType, wgpu::StringView message) {
             const std::string_view msg = message;
-            WGPU_LOG_ERROR("Uncaptured error: {} - {}", static_cast<int>(errorType), msg);
-            std::exit(EXIT_FAILURE);
+            Log::Error(Log::WebGPU, "Uncaptured error: {} - {}", static_cast<int>(errorType), msg);
         });
 
+    std::optional<std::string> deviceError;
     wgpu::Future deviceFuture = _adapter.RequestDevice(
         &deviceDesc, wgpu::CallbackMode::WaitAnyOnly,
-        [this](wgpu::RequestDeviceStatus status, wgpu::Device device, wgpu::StringView message) {
+        [this, &deviceError](wgpu::RequestDeviceStatus status, wgpu::Device device, wgpu::StringView message) {
             const std::string_view msg = message;
             if (!msg.empty()) {
-                WGPU_LOG_WARNING("RequestDevice: {}", msg);
+                Log::Warning(Log::WebGPU, "RequestDevice: {}", msg);
             }
             if (status != wgpu::RequestDeviceStatus::Success) {
-                WGPU_LOG_ERROR("Failed to request device.");
-                std::exit(EXIT_FAILURE);
+                if (!msg.empty()) {
+                    deviceError = std::string("Failed to request device: ") + std::string(msg);
+                } else {
+                    deviceError = "Failed to request device";
+                }
+                return;
             }
             _device = std::move(device);
         });
     _instance.WaitAny(deviceFuture, UINT64_MAX);
+
+    if (deviceError.has_value()) {
+        Log::Error(Log::WebGPU, "{}", deviceError.value());
+        throw std::runtime_error(deviceError.value());
+    }
 
     InitGraphics();
 }
@@ -376,7 +465,7 @@ WebgpuRenderer::~WebgpuRenderer() {
     _adapter = nullptr;
     _instance = nullptr;
 
-    WGPU_LOG_INFO("Destroyed.");
+    Log::Info(Log::WebGPU, "Destroyed");
 }
 
 //----------------------------------------------------------------------
@@ -402,7 +491,7 @@ void WebgpuRenderer::Render(const glm::mat4& modelMatrix, const CameraUniformsIn
     wgpu::SurfaceTexture surfaceTexture;
     _surface.GetCurrentTexture(&surfaceTexture);
     if (!surfaceTexture.texture) {
-        WGPU_LOG_ERROR("Failed to get current surface texture.");
+        Log::Error(Log::WebGPU, "Failed to get current surface texture");
         return;
     }
     _colorAttachment.view = surfaceTexture.texture.CreateView();
@@ -477,8 +566,9 @@ void WebgpuRenderer::SetModel(const Model& model) {
     if (needsDefaultMaterial) {
         CreateDefaultMaterial();
         defaultMaterialIndex = static_cast<int>(_materials.size()) - 1;
-        WGPU_LOG_WARNING("Model has invalid material indices, using default material at index {}.",
-                         defaultMaterialIndex);
+        Log::Warning(Log::WebGPU,
+                     "Model has invalid material indices, using default material at index {}",
+                     defaultMaterialIndex);
     }
 
     // Store submesh information, sorting by alpha mode and doubleSided into 3 lists.
@@ -531,7 +621,7 @@ void WebgpuRenderer::SetVSyncEnabled(bool enabled) {
     if (_vsyncEnabled != enabled) {
         _vsyncEnabled = enabled;
         _surfaceDirty = true;
-        WGPU_LOG_INFO("VSync {}", enabled ? "enabled" : "disabled");
+        Log::Info(Log::WebGPU, "VSync {}", enabled ? "enabled" : "disabled");
     }
 }
 
@@ -579,6 +669,8 @@ void WebgpuRenderer::InitGraphics() {
 
     // Create global bind group with default textures (environment not set yet).
     CreateGlobalBindGroup();
+
+    Log::Info(Log::WebGPU, "Initialization complete");
 }
 
 void WebgpuRenderer::ConfigureSurface() {
@@ -603,7 +695,7 @@ void WebgpuRenderer::ConfigureSurface() {
 
     // Warn if VSync OFF was requested but Immediate isn't supported.
     if (!_vsyncEnabled && actualMode != wgpu::PresentMode::Immediate) {
-        WGPU_LOG_WARNING("Present mode Immediate not supported, falling back to Fifo");
+        Log::Warning(Log::WebGPU, "Present mode Immediate not supported, falling back to Fifo");
     }
 
     wgpu::SurfaceConfiguration config{};
@@ -1056,7 +1148,7 @@ void WebgpuRenderer::CreateDefaultMaterial() {
 
     _materials.push_back(std::move(defaultMat));
 
-    WGPU_LOG_INFO("Created default material at index {}.", _materials.size() - 1);
+    Log::Info(Log::WebGPU, "Created default material at index {}", _materials.size() - 1);
 }
 
 void WebgpuRenderer::CreateGlobalBindGroup() {

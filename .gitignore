@@ -12,6 +12,9 @@
 # Cache
 .cache/
 
+# Log files
+*.log
+
 # OS files
 .DS_Store
 Thumbs.db

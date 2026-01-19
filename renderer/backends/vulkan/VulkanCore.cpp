@@ -81,9 +81,9 @@ VkBool32 DebugMessengerCallback(vk::DebugUtilsMessageSeverityFlagBitsEXT message
                                 const vk::DebugUtilsMessengerCallbackDataEXT* pCallbackData,
                                 [[maybe_unused]] void* pUserData) {
     if (messageSeverity >= vk::DebugUtilsMessageSeverityFlagBitsEXT::eError) {
-        VK_LOG_VALIDATION_ERROR(pCallbackData->pMessage);
+        Log::Error(Log::Vulkan, "Validation: {}", pCallbackData->pMessage);
     } else if (messageSeverity >= vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning) {
-        VK_LOG_VALIDATION_WARNING(pCallbackData->pMessage);
+        Log::Warning(Log::Vulkan, "Validation: {}", pCallbackData->pMessage);
     }
     return VK_FALSE;
 }
@@ -196,7 +196,7 @@ vk::PhysicalDevice SelectPhysicalDevice(vk::Instance instance, vk::SurfaceKHR su
         if (IsDeviceSuitable(device, surface)) {
             auto properties = device.getProperties();
             if (properties.deviceType == vk::PhysicalDeviceType::eDiscreteGpu) {
-                VK_LOG_INFO("Selected discrete GPU: {}", properties.deviceName.data());
+                Log::Info(Log::Vulkan, "Selected discrete GPU: {}", properties.deviceName.data());
                 return device;
             }
         }
@@ -206,7 +206,7 @@ vk::PhysicalDevice SelectPhysicalDevice(vk::Instance instance, vk::SurfaceKHR su
     for (const auto& device : devices) {
         if (IsDeviceSuitable(device, surface)) {
             auto properties = device.getProperties();
-            VK_LOG_INFO("Selected device: {}", properties.deviceName.data());
+            Log::Info(Log::Vulkan, "Selected device: {}", properties.deviceName.data());
             return device;
         }
     }
@@ -288,7 +288,7 @@ VulkanCore::VulkanCore(GLFWwindow* window) {
             vk::raii::DebugUtilsMessengerEXT(_instance, MakeDebugMessengerCreateInfo());
     }
 
-    VK_LOG_INFO("Instance created successfully.");
+    Log::Debug(Log::Vulkan, "Instance created successfully");
 
     //----------------------------------
     // Create window surface via GLFW.
@@ -323,8 +323,8 @@ VulkanCore::VulkanCore(GLFWwindow* window) {
     _graphicsQueueFamily = queueIndices.graphicsFamily.value();
     _presentQueueFamily = queueIndices.presentFamily.value();
 
-    VK_LOG_INFO("Physical device selected. Graphics queue: {}, Present queue: {}",
-                _graphicsQueueFamily, _presentQueueFamily);
+    Log::Debug(Log::Vulkan, "Physical device selected: Graphics queue {}, Present queue {}",
+               _graphicsQueueFamily, _presentQueueFamily);
 
     //----------------------------------
     // Create logical device and retrieve queues.
@@ -358,9 +358,9 @@ VulkanCore::VulkanCore(GLFWwindow* window) {
     vk::PhysicalDeviceVulkan13Features enabledVulkan13Features{};
     if (vulkan13Features.shaderDemoteToHelperInvocation) {
         enabledVulkan13Features.shaderDemoteToHelperInvocation = VK_TRUE;
-        VK_LOG_INFO("Enabling shaderDemoteToHelperInvocation feature.");
+        Log::Debug(Log::Vulkan, "Enabling shaderDemoteToHelperInvocation feature");
     } else {
-        VK_LOG_WARNING("shaderDemoteToHelperInvocation not supported by device.");
+        Log::Warning(Log::Vulkan, "shaderDemoteToHelperInvocation not supported by device");
     }
 
     // Get required device extensions.
@@ -385,12 +385,11 @@ VulkanCore::VulkanCore(GLFWwindow* window) {
     _graphicsQueue = vk::raii::Queue(_device, _graphicsQueueFamily, 0);
     _presentQueue = vk::raii::Queue(_device, _presentQueueFamily, 0);
 
-    VK_LOG_INFO("Logical device and queues created successfully.");
+    Log::Debug(Log::Vulkan, "Logical device and queues created successfully");
 }
 
 VulkanCore::~VulkanCore() {
     // vk::raii types handle cleanup automatically in reverse declaration order.
-    VK_LOG_INFO("Destroyed.");
 }
 
 //----------------------------------------------------------------------
@@ -453,7 +452,7 @@ void VulkanCore::CreateBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage,
                               vk::MemoryPropertyFlags properties, vk::raii::Buffer& buffer,
                               vk::raii::DeviceMemory& bufferMemory) const {
     if (size == 0) {
-        VK_LOG_ERROR("CreateBuffer called with size 0");
+        Log::Error(Log::Vulkan, "CreateBuffer called with size 0");
         throw std::runtime_error("CreateBuffer: size must be greater than 0");
     }
 
@@ -466,7 +465,7 @@ void VulkanCore::CreateBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage,
     try {
         buffer = _device.createBuffer(bufferInfo);
     } catch (const vk::SystemError& e) {
-        VK_LOG_ERROR("Failed to create buffer ({} bytes): {}", size, e.what());
+        Log::Error(Log::Vulkan, "Failed to create buffer ({} bytes): {}", size, e.what());
         throw;
     }
 
@@ -480,8 +479,8 @@ void VulkanCore::CreateBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage,
     try {
         bufferMemory = _device.allocateMemory(allocInfo);
     } catch (const vk::SystemError& e) {
-        VK_LOG_ERROR("Failed to allocate buffer memory ({} bytes): {}", memRequirements.size,
-                     e.what());
+        Log::Error(Log::Vulkan, "Failed to allocate buffer memory ({} bytes): {}",
+                   memRequirements.size, e.what());
         throw;
     }
 

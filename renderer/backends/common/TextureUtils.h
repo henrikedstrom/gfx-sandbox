@@ -25,4 +25,3 @@ constexpr uint32_t CalcMipLevels(uint32_t width, uint32_t height) {
 }
 
 } // namespace TextureUtils
-

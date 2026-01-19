@@ -12,7 +12,9 @@
 #include "VulkanShaderUtils.h"
 
 VulkanPanoramaToCubemapConverter::VulkanPanoramaToCubemapConverter(
-    VulkanCore& core, vk::raii::CommandPool& commandPool) : _core(core), _commandPool(commandPool) {
+    VulkanCore& core, vk::raii::CommandPool& commandPool) :
+    _core(core),
+    _commandPool(commandPool) {
     InitSampler();
     InitDescriptorSetLayout();
     InitDescriptorPool();
@@ -274,7 +276,7 @@ void VulkanPanoramaToCubemapConverter::UploadAndConvert(
     // Wait for GPU to finish before command buffer is freed (at end of function scope).
     _core.GetDevice().waitIdle();
 
-    VK_LOG_INFO("Panorama converted to cubemap ({}x{}).", cubemapSize, cubemapSize);
+    Log::Debug(Log::Vulkan, "Panorama converted to cubemap ({}x{})", cubemapSize, cubemapSize);
 }
 
 void VulkanPanoramaToCubemapConverter::InitSampler() {

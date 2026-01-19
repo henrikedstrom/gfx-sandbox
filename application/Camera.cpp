@@ -1,11 +1,11 @@
 // Class Header
 #include "Camera.h"
 
-// Standard Library Headers
-#include <iostream>
-
 // Third-Party Library Headers
 #include <glm/gtc/matrix_transform.hpp>
+
+// Project Headers
+#include "logging/Log.h"
 
 //----------------------------------------------------------------------
 // Internal Constants
@@ -98,7 +98,7 @@ void Camera::ResetToModel(glm::vec3 minBounds, glm::vec3 maxBounds) {
         // Default to unit cube if bounds are invalid.
         minBounds = glm::vec3(-0.5f);
         maxBounds = glm::vec3(0.5f);
-        std::cerr << "Warning: Invalid model bounds. Defaulting to unit cube." << std::endl;
+        Log::Warning(Log::Application, "Invalid model bounds, defaulting to unit cube");
     }
 
     // Calculate the center and radius of the bounding box.

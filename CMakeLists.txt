@@ -101,6 +101,12 @@ add_subdirectory(third_party)
 
 
 # ----------------------------------------------------------------------
+# Core library (logging, cvars, console)
+
+add_subdirectory(core)
+
+
+# ----------------------------------------------------------------------
 # Application modules
 
 add_subdirectory(application)

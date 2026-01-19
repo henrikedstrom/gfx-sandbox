@@ -331,7 +331,7 @@ void CreateTextureFromModel(VulkanCore& core, vk::raii::CommandPool& commandPool
                             vk::raii::Image& image, vk::raii::DeviceMemory& imageMemory,
                             vk::raii::ImageView& imageView) {
     if (!texture || texture->_data.empty()) {
-        VK_LOG_WARNING("CreateTextureFromModel: Invalid or empty texture data.");
+        Log::Warning(Log::Vulkan, "CreateTextureFromModel: Invalid or empty texture data");
         return;
     }
 
@@ -422,7 +422,7 @@ VulkanRenderer::VulkanRenderer(GLFWwindow* window) : _window(window) {
     CreateCommandBuffers();
     CreateSyncObjects();
 
-    VK_LOG_INFO("Initialization complete.");
+    Log::Info(Log::Vulkan, "Initialization complete");
 }
 
 VulkanRenderer::~VulkanRenderer() {
@@ -430,7 +430,7 @@ VulkanRenderer::~VulkanRenderer() {
         _core->GetDevice().waitIdle();
     }
     // Resources cleaned up automatically via RAII (reverse declaration order).
-    VK_LOG_INFO("Destroyed.");
+    Log::Info(Log::Vulkan, "Destroyed");
 }
 
 //----------------------------------------------------------------------
@@ -474,7 +474,7 @@ void VulkanRenderer::Render(const glm::mat4& modelMatrix, const CameraUniformsIn
     // Wait for the previous frame using this slot to finish.
     auto waitResult = device.waitForFences(*_inFlightFences[_currentFrame], VK_TRUE, UINT64_MAX);
     if (waitResult != vk::Result::eSuccess) {
-        VK_LOG_ERROR("Failed to wait for fence.");
+        Log::Error(Log::Vulkan, "Failed to wait for fence");
         return;
     }
 
@@ -492,7 +492,7 @@ void VulkanRenderer::Render(const glm::mat4& modelMatrix, const CameraUniformsIn
         // eSuboptimalKHR is acceptable - continue rendering, resize will happen via callback
         if (acquireResult.result != vk::Result::eSuccess &&
             acquireResult.result != vk::Result::eSuboptimalKHR) {
-            VK_LOG_ERROR("Failed to acquire swapchain image.");
+            Log::Error(Log::Vulkan, "Failed to acquire swapchain image");
             return;
         }
         imageIndex = acquireResult.value;
@@ -693,8 +693,9 @@ void VulkanRenderer::SetModel(const Model& model) {
     if (needsDefaultMaterial) {
         CreateDefaultMaterial();
         defaultMaterialIndex = static_cast<int>(_materials.size()) - 1;
-        VK_LOG_WARNING("Model has invalid material indices, using default material at index {}.",
-                       defaultMaterialIndex);
+        Log::Warning(Log::Vulkan,
+                     "Model has invalid material indices, using default material at index {}",
+                     defaultMaterialIndex);
     }
 
     // Create descriptor sets for all materials.
@@ -730,13 +731,17 @@ void VulkanRenderer::SetModel(const Model& model) {
         }
     }
 
-    VK_LOG_INFO("Model set: {} opaque single-sided, {} opaque double-sided, {} transparent "
-                "submeshes, {} materials, {} total indices.",
-                _opaqueMeshesSingleSided.size(), _opaqueMeshesDoubleSided.size(),
-                _transparentMeshes.size(), _materials.size(), _indexCount);
+    Log::Debug(Log::Vulkan,
+               "Model set: {} opaque single-sided, {} opaque double-sided, {} transparent "
+               "submeshes, {} materials, {} total indices",
+               _opaqueMeshesSingleSided.size(), _opaqueMeshesDoubleSided.size(),
+               _transparentMeshes.size(), _materials.size(), _indexCount);
 }
 
 void VulkanRenderer::SetEnvironment(const Environment& environment) {
+    // Wait for any in-flight frames to complete before destroying old textures.
+    _core->GetDevice().waitIdle();
+
     // Clean up old textures.
     _environmentTexture = nullptr;
     _environmentTextureView = nullptr;
@@ -756,7 +761,7 @@ void VulkanRenderer::SetVSyncEnabled(bool enabled) {
         _vsyncEnabled = enabled;
         _swapchainDirty = true;
         _vsyncChangePending = true;
-        VK_LOG_INFO("VSync {}", enabled ? "enabled" : "disabled");
+        Log::Info(Log::Vulkan, "VSync {}", enabled ? "enabled" : "disabled");
     }
 }
 
@@ -953,8 +958,8 @@ void VulkanRenderer::CreateDepthResources() {
 
     _depthImageView = device.createImageView(viewInfo);
 
-    VK_LOG_INFO("Depth buffer created: {}x{}, format {}", extent.width, extent.height,
-                static_cast<int>(_depthFormat));
+    Log::Debug(Log::Vulkan, "Depth buffer created: {}x{}, format {}", extent.width, extent.height,
+               static_cast<int>(_depthFormat));
 }
 
 void VulkanRenderer::RecreateFramebuffers() {
@@ -1001,7 +1006,7 @@ void VulkanRenderer::CreateUniformBuffers() {
         _globalUniformBuffersMemory.push_back(std::move(memory));
     }
 
-    VK_LOG_INFO("Uniform buffers created ({} frames).", vkbackend::kMaxFramesInFlight);
+    Log::Debug(Log::Vulkan, "Uniform buffers created ({} frames)", vkbackend::kMaxFramesInFlight);
 }
 
 void VulkanRenderer::CreateGlobalDescriptorSetLayout() {
@@ -1055,7 +1060,7 @@ void VulkanRenderer::CreateGlobalDescriptorSetLayout() {
 
     _globalDescriptorSetLayout = _core->GetRaiiDevice().createDescriptorSetLayout(layoutInfo);
 
-    VK_LOG_INFO("Global descriptor set layout created.");
+    Log::Debug(Log::Vulkan, "Global descriptor set layout created");
 }
 
 void VulkanRenderer::CreateDescriptorPool() {
@@ -1088,8 +1093,8 @@ void VulkanRenderer::CreateDescriptorPool() {
     poolInfo.pool = _core->GetRaiiDevice().createDescriptorPool(createInfo);
     poolInfo.allocatedSets = 0;
 
-    VK_LOG_INFO("Descriptor pool #1 created (capacity: {} sets).",
-                DescriptorPoolInfo::kMaxSetsPerPool);
+    Log::Debug(Log::Vulkan, "Descriptor pool #1 created (capacity: {} sets)",
+               DescriptorPoolInfo::kMaxSetsPerPool);
 }
 
 vk::raii::DescriptorPool& VulkanRenderer::GetOrCreateDescriptorPool() {
@@ -1133,8 +1138,8 @@ vk::raii::DescriptorPool& VulkanRenderer::GetOrCreateDescriptorPool() {
     newPoolInfo.pool = _core->GetRaiiDevice().createDescriptorPool(createInfo);
     newPoolInfo.allocatedSets = 1;
 
-    VK_LOG_INFO("Descriptor pool #{} created (capacity: {} sets).", _descriptorPools.size(),
-                DescriptorPoolInfo::kMaxSetsPerPool);
+    Log::Debug(Log::Vulkan, "Descriptor pool #{} created (capacity: {} sets)",
+               _descriptorPools.size(), DescriptorPoolInfo::kMaxSetsPerPool);
 
     return newPoolInfo.pool;
 }
@@ -1228,7 +1233,7 @@ void VulkanRenderer::CreateGlobalDescriptorSets() {
         _core->GetDevice().updateDescriptorSets(descriptorWrites, nullptr);
     }
 
-    VK_LOG_INFO("Descriptor sets created and updated.");
+    Log::Debug(Log::Vulkan, "Descriptor sets created and updated");
 }
 
 // -------------------------------------------------------------------------
@@ -1246,7 +1251,7 @@ void VulkanRenderer::CreateEnvironmentPipelineLayout() {
 
     _environmentPipelineLayout = _core->GetRaiiDevice().createPipelineLayout(layoutInfo);
 
-    VK_LOG_INFO("Environment pipeline layout created.");
+    Log::Debug(Log::Vulkan, "Environment pipeline layout created");
 }
 
 void VulkanRenderer::CreateEnvironmentPipeline() {
@@ -1343,7 +1348,7 @@ void VulkanRenderer::CreateEnvironmentPipeline() {
 
     _environmentPipeline = device.createGraphicsPipeline(nullptr, pipelineInfo);
 
-    VK_LOG_INFO("Environment pipeline created.");
+    Log::Debug(Log::Vulkan, "Environment pipeline created");
 }
 
 void VulkanRenderer::CreateDefaultCubemap() {
@@ -1456,7 +1461,7 @@ void VulkanRenderer::CreateDefaultCubemap() {
     _core->GetGraphicsQueue().submit(submitInfo);
     _core->GetDevice().waitIdle();
 
-    VK_LOG_INFO("Default cubemap created ({}x{} per face).", size, size);
+    Log::Debug(Log::Vulkan, "Default cubemap created ({}x{} per face)", size, size);
 }
 
 void VulkanRenderer::CreateEnvironmentTextures(const Environment& environment) {
@@ -1506,11 +1511,12 @@ void VulkanRenderer::CreateEnvironmentTextures(const Environment& environment) {
     GenerateMipmaps(*_core, _commandPool, *_iblIrradianceTexture, vk::Format::eR16G16B16A16Sfloat,
                     kIrradianceMapSize, kIrradianceMapSize, 6, irradianceMipLevels);
 
-    VK_LOG_INFO("IBL textures created (environment: {}x{}, irradiance: {}x{}, specular: {}x{}, "
-                "LUT: {}x{}).",
-                environmentCubeSize, environmentCubeSize, kIrradianceMapSize, kIrradianceMapSize,
-                kPrecomputedSpecularMapSize, kPrecomputedSpecularMapSize,
-                kBRDFIntegrationLUTMapSize, kBRDFIntegrationLUTMapSize);
+    Log::Debug(Log::Vulkan,
+               "IBL textures created (environment: {}x{}, irradiance: {}x{}, specular: {}x{}, "
+               "LUT: {}x{})",
+               environmentCubeSize, environmentCubeSize, kIrradianceMapSize, kIrradianceMapSize,
+               kPrecomputedSpecularMapSize, kPrecomputedSpecularMapSize, kBRDFIntegrationLUTMapSize,
+               kBRDFIntegrationLUTMapSize);
 }
 
 // -------------------------------------------------------------------------
@@ -1550,7 +1556,8 @@ void VulkanRenderer::CreateModelDescriptorSetLayout() {
 
     _modelDescriptorSetLayout = _core->GetRaiiDevice().createDescriptorSetLayout(layoutInfo);
 
-    VK_LOG_INFO("Model descriptor set layout created with material uniforms and textures.");
+    Log::Debug(Log::Vulkan,
+               "Model descriptor set layout created with material uniforms and textures");
 }
 
 void VulkanRenderer::CreateModelPipelineLayout() {
@@ -1572,7 +1579,7 @@ void VulkanRenderer::CreateModelPipelineLayout() {
 
     _modelPipelineLayout = _core->GetRaiiDevice().createPipelineLayout(layoutInfo);
 
-    VK_LOG_INFO("Model pipeline layout created.");
+    Log::Debug(Log::Vulkan, "Model pipeline layout created");
 }
 
 void VulkanRenderer::CreateDefaultTextures() {
@@ -1660,7 +1667,7 @@ void VulkanRenderer::CreateDefaultTextures() {
                                   _defaultNormalTextureMemory, _defaultNormalTextureView);
     }
 
-    VK_LOG_INFO("Default textures created.");
+    Log::Debug(Log::Vulkan, "Default textures created");
 }
 
 void VulkanRenderer::CreateSamplers() {
@@ -1720,13 +1727,13 @@ void VulkanRenderer::CreateSamplers() {
         _iblBrdfIntegrationLUTSampler = device.createSampler(samplerInfo);
     }
 
-    VK_LOG_INFO("Samplers created (model, environment cube, BRDF LUT).");
+    Log::Debug(Log::Vulkan, "Samplers created (model, environment cube, BRDF LUT)");
 }
 
 void VulkanRenderer::CreateVertexBuffer(const Model& model) {
     const auto& vertices = model.GetVertices();
     if (vertices.empty()) {
-        VK_LOG_WARNING("CreateVertexBuffer: No vertices in model.");
+        Log::Warning(Log::Vulkan, "CreateVertexBuffer: No vertices in model");
         return;
     }
 
@@ -1753,13 +1760,14 @@ void VulkanRenderer::CreateVertexBuffer(const Model& model) {
     // Copy from staging to device-local buffer.
     CopyBuffer(*stagingBuffer, *_vertexBuffer, bufferSize);
 
-    VK_LOG_INFO("Created vertex buffer with {} vertices ({} bytes).", vertices.size(), bufferSize);
+    Log::Debug(Log::Vulkan, "Created vertex buffer with {} vertices ({} bytes)", vertices.size(),
+               bufferSize);
 }
 
 void VulkanRenderer::CreateIndexBuffer(const Model& model) {
     const auto& indices = model.GetIndices();
     if (indices.empty()) {
-        VK_LOG_WARNING("CreateIndexBuffer: No indices in model.");
+        Log::Warning(Log::Vulkan, "CreateIndexBuffer: No indices in model");
         return;
     }
 
@@ -1787,7 +1795,8 @@ void VulkanRenderer::CreateIndexBuffer(const Model& model) {
     // Copy from staging to device-local buffer.
     CopyBuffer(*stagingBuffer, *_indexBuffer, bufferSize);
 
-    VK_LOG_INFO("Created index buffer with {} indices ({} bytes).", indices.size(), bufferSize);
+    Log::Debug(Log::Vulkan, "Created index buffer with {} indices ({} bytes)", indices.size(),
+               bufferSize);
 }
 
 void VulkanRenderer::CreateMaterials(const Model& model) {
@@ -1796,7 +1805,7 @@ void VulkanRenderer::CreateMaterials(const Model& model) {
     _materials.clear();
 
     if (model.GetMaterials().empty()) {
-        VK_LOG_INFO("No materials in model.");
+        Log::Debug(Log::Vulkan, "No materials in model");
         return;
     }
 
@@ -1884,10 +1893,10 @@ void VulkanRenderer::CreateMaterials(const Model& model) {
                                    dstMat._emissiveTextureView);
         }
 
-        VK_LOG_INFO("Created material {} with uniform buffer and textures.", i);
+        Log::Debug(Log::Vulkan, "Created material {} with uniform buffer and textures", i);
     }
 
-    VK_LOG_INFO("Created {} materials with textures.", _materials.size());
+    Log::Debug(Log::Vulkan, "Created {} materials with textures", _materials.size());
 }
 
 void VulkanRenderer::CreateDefaultMaterial() {
@@ -1938,14 +1947,14 @@ void VulkanRenderer::CreateDefaultMaterial() {
 
     _materials.push_back(std::move(defaultMat));
 
-    VK_LOG_INFO("Created default material at index {}.", _materials.size() - 1);
+    Log::Debug(Log::Vulkan, "Created default material at index {}", _materials.size() - 1);
 }
 
 void VulkanRenderer::CreateMaterialDescriptorSets() {
     const auto& device = _core->GetRaiiDevice();
 
     if (_materials.empty()) {
-        VK_LOG_INFO("No materials to create descriptor sets for.");
+        Log::Debug(Log::Vulkan, "No materials to create descriptor sets for");
         return;
     }
 
@@ -2033,7 +2042,7 @@ void VulkanRenderer::CreateMaterialDescriptorSets() {
         _core->GetDevice().updateDescriptorSets(descriptorWrites, nullptr);
     }
 
-    VK_LOG_INFO("Created {} material descriptor sets with textures.", _materials.size());
+    Log::Debug(Log::Vulkan, "Created {} material descriptor sets with textures", _materials.size());
 }
 
 void VulkanRenderer::CreateModelPipelines() {
@@ -2198,7 +2207,8 @@ void VulkanRenderer::CreateModelPipelines() {
 
     _modelPipelineTransparent = device.createGraphicsPipeline(nullptr, pipelineInfo);
 
-    VK_LOG_INFO("Model pipelines created: opaque (single-sided + double-sided) + transparent.");
+    Log::Debug(Log::Vulkan,
+               "Model pipelines created: opaque (single-sided + double-sided) + transparent");
 }
 
 // -------------------------------------------------------------------------
