@@ -44,6 +44,7 @@ class LogManager {
 
     void AddSink(std::unique_ptr<ISink> sink);
     void RemoveAllSinks();
+    void RegisterCategory(std::string_view category, Level defaultLevel);
     void SetLevel(std::string_view category, Level level);
     Level GetLevel(std::string_view category) const;
     bool ShouldLog(std::string_view category, Level level) const;
@@ -56,6 +57,7 @@ class LogManager {
 
     std::vector<std::unique_ptr<ISink>> _sinks;
     std::unordered_map<std::string, Level, StringViewHash, std::equal_to<>> _categoryLevels;
+    std::unordered_map<std::string, Level, StringViewHash, std::equal_to<>> _categoryDefaults;
     mutable std::mutex _mutex;
 };
 

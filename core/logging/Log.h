@@ -152,6 +152,14 @@ Fatal(Category, std::format_string<Args...>, Args&&...) -> Fatal<Category, Args.
         static constexpr ::Log::Level kCompileLevel = Compile;                                     \
     };                                                                                             \
     inline constexpr Log##Name Name;                                                               \
+    namespace {                                                                                     \
+    struct Log##Name##Registrar {                                                                  \
+        Log##Name##Registrar() {                                                                   \
+            LogManager::Instance().RegisterCategory(Log##Name::kName, Log##Name::kDefaultLevel);   \
+        }                                                                                          \
+    };                                                                                             \
+    inline Log##Name##Registrar g_##Name##Registrar;                                               \
+    }                                                                                              \
     }
 
 // Define a log category with default levels (Info, Trace).
