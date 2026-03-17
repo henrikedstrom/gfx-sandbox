@@ -8,8 +8,8 @@
 | Feature | Notes |
 |---------|-------|
 | FPS Counter ✅ | Display in title bar and/or through ImGui overlay. |
-| Logging System 🔨 | Unify existing `VK_LOG_*`/`WGPU_LOG_*` macros into a shared system with levels, categories, and sinks. |
-| Dear ImGui | Integrate with WebGPU/Vulkan. |
+| Logging System ✅ | Unify existing `VK_LOG_*`/`WGPU_LOG_*` macros into a shared system with levels, categories, and sinks. |
+| Dear ImGui 🔨 | Integrate with WebGPU/Vulkan. |
 | Console Variables | Edit via ImGui panel initially. Support simple command parsing/execution. |
 | GPU Profiling | Per-pass timings, pipeline stats. ImGui visualization. |
 

@@ -24,6 +24,7 @@ macro(FetchContent_DeclareShallowGit Name GIT_REPOSITORY GitRepository GIT_TAG G
   )
 endmacro()
 
+# ----------------------------------------------------------------------
 # GLM (header-only math library)
 set(GFX_GLM_VERSION "1.0.2" CACHE STRING "GLM version" FORCE)
 FetchContent_Declare(
@@ -35,6 +36,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(glm)
 set_directory_root_folder("${glm_SOURCE_DIR}" "ThirdParty/glm")
 
+# ----------------------------------------------------------------------
 # GLFW (windowing, only on native platforms)
 if(NOT EMSCRIPTEN)
   set(GFX_GLFW_VERSION "3.4" CACHE STRING "GLFW version" FORCE)
@@ -53,9 +55,37 @@ if(NOT EMSCRIPTEN)
   set_directory_root_folder("${glfw_SOURCE_DIR}" "ThirdParty/glfw")
 endif()
 
+# ----------------------------------------------------------------------
+# ImGui (UI library)
+set(GFX_IMGUI_VERSION "v1.92.6" CACHE STRING "ImGui version" FORCE)
+FetchContent_Declare(
+  imgui
+  GIT_REPOSITORY https://github.com/ocornut/imgui.git
+  GIT_TAG ${GFX_IMGUI_VERSION}
+  GIT_SHALLOW ON
+)
+FetchContent_MakeAvailable(imgui)
+
+add_library(imgui STATIC
+  ${imgui_SOURCE_DIR}/imgui.cpp
+  ${imgui_SOURCE_DIR}/imgui_demo.cpp
+  ${imgui_SOURCE_DIR}/imgui_draw.cpp
+  ${imgui_SOURCE_DIR}/imgui_tables.cpp
+  ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+  ${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
+)
+target_include_directories(imgui PUBLIC
+  ${imgui_SOURCE_DIR}
+  ${imgui_SOURCE_DIR}/backends
+)
+target_link_libraries(imgui PUBLIC glfw)
+set_target_properties(imgui PROPERTIES FOLDER "ThirdParty/imgui")
+
+# ----------------------------------------------------------------------
 # MikkTSpace (tangent space generation, vendored)
 add_subdirectory(mikktspace)
 
+# ----------------------------------------------------------------------
 # Dawn / WebGPU (only fetched when WebGPU backend is enabled)
 if(ENABLE_WEBGPU)
   add_subdirectory(dawn EXCLUDE_FROM_ALL)
