@@ -180,10 +180,27 @@ jobs:
         shell: bash
         run: echo "EMSDK_VERSION=$(tr -d '\r\n' < .emscripten-version)" >> "$GITHUB_ENV"
 
-      - name: Setup Emscripten
-        uses: mymindstorm/setup-emsdk@v14
-        with:
-          version: ${{ env.EMSDK_VERSION }}
+      - name: Install Emscripten
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/emsdk"
+          cd "$RUNNER_TEMP/emsdk"
+          ./emsdk install "$EMSDK_VERSION"
+          ./emsdk activate "$EMSDK_VERSION"
+
+          # Export paths for subsequent steps in this job.
+          echo "EMSDK=$RUNNER_TEMP/emsdk" >> "$GITHUB_ENV"
+          echo "$RUNNER_TEMP/emsdk" >> "$GITHUB_PATH"
+          echo "$RUNNER_TEMP/emsdk/upstream/emscripten" >> "$GITHUB_PATH"
+
+      - name: Verify Emscripten tools
+        shell: bash
+        run: |
+          set -euxo pipefail
+          emcc --version
+          command -v emcmake
+          emcmake cmake --version
 
       - name: Cache CMake dependencies (FetchContent)
         uses: actions/cache@v5
