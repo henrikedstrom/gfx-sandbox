@@ -53,10 +53,42 @@ jobs:
       # Platform-specific Vulkan SDK installation
       - name: Install Vulkan SDK (Linux)
         if: runner.os == 'Linux'
-        uses: humbletim/install-vulkan-sdk@v1.2
-        with:
-          version: ${{ env.VULKAN_SDK_VERSION }}
-          cache: true
+        shell: bash
+        run: |
+          set -euxo pipefail
+          version="${{ env.VULKAN_SDK_VERSION }}"
+          archivePath="$RUNNER_TEMP/vulkan-sdk-linux.tar.xz"
+          extractRoot="$RUNNER_TEMP/vulkan-sdk-linux"
+          sdkArchiveUrl="https://sdk.lunarg.com/sdk/download/$version/linux/vulkansdk-linux-x86_64-$version.tar.xz?Human=true"
+
+          echo "Downloading Vulkan SDK $version..."
+          curl -L --fail -o "$archivePath" "$sdkArchiveUrl"
+
+          echo "Extracting Vulkan SDK archive..."
+          mkdir -p "$extractRoot"
+          tar -xJf "$archivePath" -C "$extractRoot"
+
+          sdkPath="$(echo "$extractRoot"/"$version"/x86_64)"
+          if [ ! -d "$sdkPath" ]; then
+            echo "ERROR: Expected Vulkan SDK path not found: $sdkPath"
+            ls -la "$extractRoot" || true
+            exit 1
+          fi
+
+          # Verify required files for CMake's Vulkan shaderc_combined component.
+          if [ ! -f "$sdkPath/include/vulkan/vulkan.h" ]; then
+            echo "ERROR: Vulkan headers not found in $sdkPath/include/vulkan"
+            exit 1
+          fi
+          if [ ! -f "$sdkPath/lib/libshaderc_combined.a" ] && [ ! -f "$sdkPath/lib/libshaderc_combined.so" ]; then
+            echo "ERROR: shaderc_combined library not found in $sdkPath/lib"
+            ls -la "$sdkPath/lib" || true
+            exit 1
+          fi
+
+          echo "Vulkan SDK installation verified successfully"
+          echo "VULKAN_SDK=$sdkPath" >> "$GITHUB_ENV"
+          echo "$sdkPath/bin" >> "$GITHUB_PATH"
 
       - name: Install Vulkan SDK (Windows)
         if: runner.os == 'Windows'
