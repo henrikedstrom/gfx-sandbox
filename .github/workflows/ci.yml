@@ -15,6 +15,7 @@ permissions:
 
 env:
   VULKAN_SDK_VERSION: "1.4.335.0"
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   # Native builds for Windows, macOS, and Linux
@@ -29,7 +30,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           submodules: false
 
@@ -147,7 +148,7 @@ jobs:
           echo "$sdkPath/bin" >> $GITHUB_PATH
 
       - name: Cache CMake dependencies (FetchContent)
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: build-${{ matrix.build_type }}/_deps
           key: ${{ runner.os }}-cmake-deps-${{ matrix.build_type }}-${{ hashFiles('**/CMakeLists.txt', '**/*.cmake') }}
@@ -171,7 +172,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           submodules: false
 
@@ -185,7 +186,7 @@ jobs:
           version: ${{ env.EMSDK_VERSION }}
 
       - name: Cache CMake dependencies (FetchContent)
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: build-web-${{ matrix.build_type }}/_deps
           key: web-cmake-deps-${{ matrix.build_type }}-${{ hashFiles('**/CMakeLists.txt', '**/*.cmake', '.emscripten-version') }}

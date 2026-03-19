@@ -27,6 +27,12 @@ set(gfx_renderer_webgpu_sources
 # ImGui WebGPU backend (sources from FetchContent imgui; not under TREE for source_group)
 set(gfx_renderer_webgpu_extra_sources "${GFX_IMGUI_SOURCE_DIR}/backends/imgui_impl_wgpu.cpp")
 
+# macOS: imgui_impl_wgpu.cpp includes <Cocoa/Cocoa.h> and must be compiled as Objective-C++
+if(APPLE)
+  set_source_files_properties(${gfx_renderer_webgpu_extra_sources}
+    PROPERTIES COMPILE_FLAGS "-x objective-c++")
+endif()
+
 # Shader files (for IDE visibility, not compiled)
 set(gfx_renderer_webgpu_shaders
   shaders/environment.wgsl
