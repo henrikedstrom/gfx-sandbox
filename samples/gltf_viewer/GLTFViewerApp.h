@@ -35,8 +35,10 @@ class GltfViewerApp final : public Application {
   private:
     static std::string ParseBackendArg(int argc, char** argv);
     void SwitchToNextBackend();
+    IRenderer::OverlayCallback MakeOverlayCallback();
 
     std::string _backendName;
+    bool _pendingBackendSwitch{false};
     bool _animateModel{true};
     Camera _camera;
     Environment _environment;

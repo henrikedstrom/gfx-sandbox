@@ -13,6 +13,9 @@
 
 // Third-Party Library Headers
 #include <GLFW/glfw3.h>
+#include <imgui.h>
+#include <imgui_impl_glfw.h>
+#include <imgui_impl_wgpu.h>
 
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #define GLM_FORCE_RIGHT_HANDED
@@ -295,7 +298,8 @@ WebgpuRenderer::WebgpuRenderer(GLFWwindow* window) : _window(window) {
     std::optional<std::string> adapterError;
     wgpu::Future adapterFuture = _instance.RequestAdapter(
         &adapterOptions, wgpu::CallbackMode::WaitAnyOnly,
-        [this, &adapterError](wgpu::RequestAdapterStatus status, wgpu::Adapter adapter, wgpu::StringView message) {
+        [this, &adapterError](wgpu::RequestAdapterStatus status, wgpu::Adapter adapter,
+                              wgpu::StringView message) {
             const std::string_view msg = message;
             if (!msg.empty()) {
                 Log::Warning(Log::WebGPU, "RequestAdapter: {}", msg);
@@ -372,7 +376,8 @@ WebgpuRenderer::WebgpuRenderer(GLFWwindow* window) : _window(window) {
     std::optional<std::string> deviceError;
     wgpu::Future deviceFuture = _adapter.RequestDevice(
         &deviceDesc, wgpu::CallbackMode::WaitAnyOnly,
-        [this, &deviceError](wgpu::RequestDeviceStatus status, wgpu::Device device, wgpu::StringView message) {
+        [this, &deviceError](wgpu::RequestDeviceStatus status, wgpu::Device device,
+                             wgpu::StringView message) {
             const std::string_view msg = message;
             if (!msg.empty()) {
                 Log::Warning(Log::WebGPU, "RequestDevice: {}", msg);
@@ -402,6 +407,8 @@ WebgpuRenderer::~WebgpuRenderer() {
     if (_device) {
         WaitForGpuIdle();
     }
+
+    ShutdownImGui();
 
     // Clear collections first (these hold GPU resources).
     _materials.clear();
@@ -533,6 +540,19 @@ void WebgpuRenderer::Render(const glm::mat4& modelMatrix, const CameraUniformsIn
         }
     }
 
+    // Render ImGui overlay.
+    if (_overlayCallback && _imguiInitialized) {
+        ImGui_ImplWGPU_NewFrame();
+        ImGui_ImplGlfw_NewFrame();
+        ImGui::NewFrame();
+        _overlayCallback();
+        ImGui::Render();
+        ImDrawData* drawData = ImGui::GetDrawData();
+        if (drawData && drawData->TotalVtxCount > 0) {
+            ImGui_ImplWGPU_RenderDrawData(drawData, pass.Get());
+        }
+    }
+
     pass.End();
 
     wgpu::CommandBuffer commands = encoder.Finish();
@@ -639,6 +659,13 @@ void WebgpuRenderer::ReloadShaders() {
 
     CreateEnvironmentRenderPipeline();
     CreateModelRenderPipelines();
+}
+
+void WebgpuRenderer::SetOverlayCallback(OverlayCallback callback) {
+    _overlayCallback = std::move(callback);
+    if (_overlayCallback && !_imguiInitialized) {
+        InitImGui();
+    }
 }
 
 //----------------------------------------------------------------------
@@ -1489,4 +1516,39 @@ void WebgpuRenderer::SortTransparentMeshes(const glm::mat4& modelMatrix,
     std::ranges::sort(
         _transparentMeshesDepthSorted,
         [](const SubMeshDepthInfo& a, const SubMeshDepthInfo& b) { return a._depth < b._depth; });
+}
+
+void WebgpuRenderer::InitImGui() {
+    if (_imguiInitialized || !_window || !_device ||
+        _surfaceFormat == wgpu::TextureFormat::Undefined) {
+        return;
+    }
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGui::StyleColorsDark();
+
+    ImGui_ImplGlfw_InitForOther(_window, true);
+
+    // Dawn/WebGPU doesn't expose swapchain image count; 3 is a safe default.
+    constexpr int kImGuiFramesInFlight = 3;
+
+    ImGui_ImplWGPU_InitInfo initInfo{};
+    initInfo.Device = _device.Get();
+    initInfo.NumFramesInFlight = kImGuiFramesInFlight;
+    initInfo.RenderTargetFormat = static_cast<WGPUTextureFormat>(_surfaceFormat);
+    initInfo.DepthStencilFormat =
+        static_cast<WGPUTextureFormat>(wgpu::TextureFormat::Depth24PlusStencil8);
+    ImGui_ImplWGPU_Init(&initInfo);
+
+    _imguiInitialized = true;
+}
+
+void WebgpuRenderer::ShutdownImGui() {
+    if (!_imguiInitialized || !_device) {
+        return;
+    }
+    ImGui_ImplWGPU_Shutdown();
+    ImGui_ImplGlfw_Shutdown();
+    ImGui::DestroyContext();
+    _imguiInitialized = false;
 }

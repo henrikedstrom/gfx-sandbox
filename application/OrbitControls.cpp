@@ -6,6 +6,7 @@
 
 // Third-Party Library Headers
 #include <GLFW/glfw3.h>
+#include <imgui.h>
 
 // Project Headers
 #include "Camera.h"
@@ -49,6 +50,10 @@ OrbitControls::~OrbitControls() {
 }
 
 void OrbitControls::CursorPositionCallback(GLFWwindow* window, double xpos, double ypos) noexcept {
+    if (ImGui::GetCurrentContext() && ImGui::GetIO().WantCaptureMouse) {
+        return;
+    }
+
     auto* controls = GetControls(window);
     if (!controls) {
         return;
@@ -70,6 +75,10 @@ void OrbitControls::CursorPositionCallback(GLFWwindow* window, double xpos, doub
 
 void OrbitControls::ScrollCallback(GLFWwindow* window, [[maybe_unused]] double xoffset,
                                    double yoffset) noexcept {
+    if (ImGui::GetCurrentContext() && ImGui::GetIO().WantCaptureMouse) {
+        return;
+    }
+
     auto* controls = GetControls(window);
     if (!controls) {
         return;
@@ -80,6 +89,10 @@ void OrbitControls::ScrollCallback(GLFWwindow* window, [[maybe_unused]] double x
 
 void OrbitControls::MouseButtonCallback(GLFWwindow* window, int button, int action,
                                         int mods) noexcept {
+    if (ImGui::GetCurrentContext() && ImGui::GetIO().WantCaptureMouse) {
+        return;
+    }
+
     auto* controls = GetControls(window);
     if (!controls) {
         return;

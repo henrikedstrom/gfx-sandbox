@@ -38,6 +38,7 @@ class WebgpuRenderer final : public IRenderer {
     void SetVSyncEnabled(bool enabled) override;
     bool IsVSyncEnabled() const override;
     void ReloadShaders() override;
+    void SetOverlayCallback(OverlayCallback callback) override;
 
   private:
     // Private utility methods
@@ -61,6 +62,8 @@ class WebgpuRenderer final : public IRenderer {
     void CreateDefaultTextures();
     void UpdateUniforms(const glm::mat4& modelMatrix, const CameraUniformsInput& camera) const;
     void SortTransparentMeshes(const glm::mat4& modelMatrix, const glm::mat4& viewMatrix);
+    void InitImGui();
+    void ShutdownImGui();
 
     // Types
     struct GlobalUniforms {
@@ -179,4 +182,8 @@ class WebgpuRenderer final : public IRenderer {
     // VSync state
     bool _vsyncEnabled{true};
     bool _surfaceDirty{false};
+
+    // ImGui overlay
+    OverlayCallback _overlayCallback;
+    bool _imguiInitialized{false};
 };

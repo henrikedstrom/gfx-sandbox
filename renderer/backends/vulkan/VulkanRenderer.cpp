@@ -11,6 +11,9 @@
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #define GLM_FORCE_RIGHT_HANDED
 #include <glm/ext.hpp>
+#include <imgui.h>
+#include <imgui_impl_glfw.h>
+#include <imgui_impl_vulkan.h>
 
 // Project Headers
 #include "BackendRegistry.h"
@@ -22,6 +25,7 @@
 #include "VulkanPanoramaToCubemapConverter.h"
 #include "VulkanShaderUtils.h"
 #include "VulkanSwapchain.h"
+#include "logging/Log.h"
 
 //----------------------------------------------------------------------
 // Backend Registration
@@ -426,10 +430,14 @@ VulkanRenderer::VulkanRenderer(GLFWwindow* window) : _window(window) {
 }
 
 VulkanRenderer::~VulkanRenderer() {
+    // Wait for device to be idle before destroying resources.
     if (_core) {
         _core->GetDevice().waitIdle();
     }
-    // Resources cleaned up automatically via RAII (reverse declaration order).
+
+    ShutdownImGui();
+
+    // Remaining resources are cleaned up automatically via RAII (reverse declaration order).
     Log::Info(Log::Vulkan, "Destroyed");
 }
 
@@ -622,6 +630,19 @@ void VulkanRenderer::Render(const glm::mat4& modelMatrix, const CameraUniformsIn
         }
     }
 
+    // Render ImGui overlay.
+    if (_overlayCallback && _imguiInitialized) {
+        ImGui_ImplVulkan_NewFrame();
+        ImGui_ImplGlfw_NewFrame();
+        ImGui::NewFrame();
+        _overlayCallback();
+        ImGui::Render();
+        ImDrawData* drawData = ImGui::GetDrawData();
+        if (drawData && drawData->TotalVtxCount > 0) {
+            ImGui_ImplVulkan_RenderDrawData(drawData, *cmd);
+        }
+    }
+
     cmd.endRenderPass();
 
     cmd.end();
@@ -782,6 +803,13 @@ void VulkanRenderer::ReloadShaders() {
 
     CreateEnvironmentPipeline();
     CreateModelPipelines();
+}
+
+void VulkanRenderer::SetOverlayCallback(OverlayCallback callback) {
+    _overlayCallback = std::move(callback);
+    if (_overlayCallback && !_imguiInitialized) {
+        InitImGui();
+    }
 }
 
 // -------------------------------------------------------------------------
@@ -2304,4 +2332,63 @@ void VulkanRenderer::CopyBuffer(vk::Buffer srcBuffer, vk::Buffer dstBuffer, vk::
 
     _core->GetGraphicsQueue().submit(submitInfo);
     _core->GetDevice().waitIdle();
+}
+
+//----------------------------------------------------------------------
+// ImGui overlay
+
+void VulkanRenderer::InitImGui() {
+    if (_imguiInitialized || !_window || !_core || !_swapchain || _framebuffers.empty()) {
+        return;
+    }
+
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGui::StyleColorsDark();
+
+    ImGui_ImplGlfw_InitForVulkan(_window, true);
+
+    const uint32_t imageCount = _swapchain->GetImageCount();
+    constexpr uint32_t kImGuiPoolSize = 100;
+    vk::DescriptorPoolSize poolSize(vk::DescriptorType::eCombinedImageSampler, kImGuiPoolSize);
+    vk::DescriptorPoolCreateInfo poolInfo{};
+    poolInfo.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
+    poolInfo.maxSets = kImGuiPoolSize;
+    poolInfo.poolSizeCount = 1;
+    poolInfo.pPoolSizes = &poolSize;
+    _imguiDescriptorPool = _core->GetRaiiDevice().createDescriptorPool(poolInfo);
+
+    ImGui_ImplVulkan_InitInfo initInfo{};
+    initInfo.Instance = static_cast<VkInstance>(_core->GetInstance());
+    initInfo.PhysicalDevice = static_cast<VkPhysicalDevice>(_core->GetPhysicalDevice());
+    initInfo.Device = static_cast<VkDevice>(_core->GetDevice());
+    initInfo.QueueFamily = _core->GetGraphicsQueueFamily();
+    initInfo.Queue = static_cast<VkQueue>(_core->GetGraphicsQueue());
+    initInfo.PipelineCache = VK_NULL_HANDLE;
+    initInfo.DescriptorPool = static_cast<VkDescriptorPool>(*_imguiDescriptorPool);
+    initInfo.MinImageCount = 2;
+    initInfo.ImageCount = imageCount;
+    initInfo.Allocator = nullptr;
+    initInfo.CheckVkResultFn = [](VkResult err) {
+        if (err != VK_SUCCESS) {
+            Log::Error(Log::Vulkan, "ImGui Vulkan error: {}", static_cast<int32_t>(err));
+        }
+    };
+    initInfo.PipelineInfoMain.RenderPass = static_cast<VkRenderPass>(*_renderPass);
+    initInfo.PipelineInfoMain.Subpass = 0;
+    initInfo.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+
+    ImGui_ImplVulkan_Init(&initInfo);
+    _imguiInitialized = true;
+}
+
+void VulkanRenderer::ShutdownImGui() {
+    if (!_imguiInitialized || !_core) {
+        return;
+    }
+
+    ImGui_ImplVulkan_Shutdown();
+    ImGui_ImplGlfw_Shutdown();
+    ImGui::DestroyContext();
+    _imguiInitialized = false;
 }

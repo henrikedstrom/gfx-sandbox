@@ -26,18 +26,28 @@ set(gfx_renderer_vulkan_sources
   VulkanSwapchain.h
 )
 
-source_group(TREE "${CMAKE_CURRENT_LIST_DIR}" FILES ${gfx_renderer_vulkan_sources})
+# ImGui Vulkan backend (sources from FetchContent imgui; not under TREE for source_group)
+set(gfx_renderer_vulkan_extra_sources "${GFX_IMGUI_SOURCE_DIR}/backends/imgui_impl_vulkan.cpp")
 
-add_library(gfx_renderer_vulkan ${gfx_renderer_vulkan_sources})
+source_group(TREE "${CMAKE_CURRENT_LIST_DIR}" FILES ${gfx_renderer_vulkan_sources})
+source_group("ImGui" FILES ${gfx_renderer_vulkan_extra_sources})
+
+add_library(gfx_renderer_vulkan ${gfx_renderer_vulkan_sources} ${gfx_renderer_vulkan_extra_sources})
 
 target_include_directories(gfx_renderer_vulkan PUBLIC
   ${CMAKE_CURRENT_LIST_DIR}
+)
+
+target_include_directories(gfx_renderer_vulkan PRIVATE
+  ${GFX_IMGUI_SOURCE_DIR}
+  ${GFX_IMGUI_SOURCE_DIR}/backends
 )
 
 target_link_libraries(gfx_renderer_vulkan PUBLIC
   gfx_build_options
   core
   gfx_renderer_core
+  imgui
   Vulkan::Vulkan
   Vulkan::shaderc_combined
   glfw

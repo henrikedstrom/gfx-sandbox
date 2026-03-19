@@ -5,6 +5,7 @@
 
 // Standard Library Headers
 #include <cstdint>
+#include <functional>
 
 // Third-Party Library Headers
 #include <glm/glm.hpp>
@@ -20,6 +21,9 @@ class Model;
 /// Abstract renderer interface for graphics backend implementations.
 class IRenderer {
   public:
+    // Callback invoked each frame to build overlay UI
+    using OverlayCallback = std::function<void()>;
+
     virtual ~IRenderer() = default;
 
     virtual void Resize() = 0;
@@ -31,4 +35,5 @@ class IRenderer {
     virtual bool IsVSyncEnabled() const = 0;
 
     virtual void ReloadShaders() {}
+    virtual void SetOverlayCallback([[maybe_unused]] OverlayCallback callback) {}
 };

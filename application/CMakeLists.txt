@@ -25,6 +25,7 @@ target_include_directories(gfx_application PUBLIC
 target_link_libraries(gfx_application PUBLIC gfx_build_options)
 target_link_libraries(gfx_application PUBLIC core)
 target_link_libraries(gfx_application PUBLIC glm)
+target_link_libraries(gfx_application PUBLIC imgui)
 
 # GLFW provides windowing on native platforms; Emscripten uses browser APIs.
 if(NOT EMSCRIPTEN)

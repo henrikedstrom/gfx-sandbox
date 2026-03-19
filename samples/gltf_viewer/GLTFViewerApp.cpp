@@ -8,6 +8,7 @@
 
 // Third-Party Library Headers
 #include <GLFW/glfw3.h>
+#include <imgui.h>
 
 // Project Headers
 #include "BackendRegistry.h"
@@ -76,6 +77,9 @@ void GltfViewerApp::OnInit() {
     if (_backendName.empty()) {
         _backendName = BackendRegistry::Instance().GetDefaultBackend();
     }
+
+    // Init ImGui overlay.
+    _renderer->SetOverlayCallback(MakeOverlayCallback());
 }
 
 void GltfViewerApp::SwitchToNextBackend() {
@@ -114,9 +118,31 @@ void GltfViewerApp::SwitchToNextBackend() {
     _renderer->SetVSyncEnabled(vsyncEnabled);
     _renderer->SetEnvironment(_environment);
     _renderer->SetModel(_model);
+    _renderer->SetOverlayCallback(MakeOverlayCallback());
+}
+
+IRenderer::OverlayCallback GltfViewerApp::MakeOverlayCallback() {
+    // Captures by reference are safe: the app (owner of these members) outlives the renderer.
+    return [&backendName = _backendName, &frameTimer = GetFrameTimer()]() {
+        ImGui::SetNextWindowPos({10, 10}, ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowBgAlpha(0.35f);
+        if (ImGui::Begin("Stats", nullptr,
+                         ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                             ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
+                             ImGuiWindowFlags_NoMove)) {
+            ImGui::Text("Backend: %s", backendName.c_str());
+            ImGui::Text("%.1f FPS (%.2f ms)", frameTimer.GetFps(), frameTimer.GetAvgFrameTimeMs());
+        }
+        ImGui::End();
+    };
 }
 
 void GltfViewerApp::OnFrame(float dtSeconds) {
+    if (_pendingBackendSwitch) {
+        _pendingBackendSwitch = false;
+        SwitchToNextBackend();
+    }
+
     if (!_renderer) {
         return;
     }
@@ -149,7 +175,7 @@ void GltfViewerApp::OnKeyPressed(int key, int mods) {
             _animateModel = !_animateModel;
         }
     } else if (key == GLFW_KEY_B) {
-        SwitchToNextBackend();
+        _pendingBackendSwitch = true;
     } else if (key == GLFW_KEY_R) {
         if (_renderer) {
             _renderer->ReloadShaders();

@@ -130,7 +130,7 @@ class SomeClass;
   ```
 - **File headers:** Use `/// @file` + `/// @brief` at the top of header files
 - **Class/type documentation:** Use `///` for file-level and top-level class, struct, and enum documentation (single or multi-line). Do not use `///` for types, members, or methods that are inside another class or struct
-- **Inside classes/structs:** Use `//` for nested types, members, and methods. Regular `//` comments are acceptable when the name and signature are not self-documenting enough; do not comment more than neccessary
+- **Inside classes/structs:** Use `//` for nested types, members, and methods. Regular `//` comments are acceptable when the name and signature are not self-documenting enough; do not comment more than necessary
 - **Enum values:** Use regular `//` comments for enum value documentation, not `///<`
 - **Section comments:** Use `//` for section headers like `// Public Interface`, `// Accessors`, `// Private Member Functions`
 - **Comment workarounds and non-obvious decisions** — future readers need context

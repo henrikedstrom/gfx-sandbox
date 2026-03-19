@@ -40,6 +40,7 @@ class VulkanRenderer final : public IRenderer {
     void SetVSyncEnabled(bool enabled) override;
     bool IsVSyncEnabled() const override;
     void ReloadShaders() override;
+    void SetOverlayCallback(OverlayCallback callback) override;
 
   private:
     // -------------------------------------------------------------------------
@@ -164,6 +165,10 @@ class VulkanRenderer final : public IRenderer {
     void CopyBuffer(vk::Buffer srcBuffer, vk::Buffer dstBuffer, vk::DeviceSize size);
     vk::raii::DescriptorPool& GetOrCreateDescriptorPool();
 
+    // ImGui
+    void InitImGui();
+    void ShutdownImGui();
+
     // -------------------------------------------------------------------------
     // Core Vulkan resources
 
@@ -270,4 +275,11 @@ class VulkanRenderer final : public IRenderer {
     std::vector<vk::raii::Semaphore> _renderFinishedSemaphores; // Per swapchain image
     std::vector<vk::raii::Fence> _inFlightFences;               // Per frame in flight
     uint32_t _currentFrame{0};
+
+    // -------------------------------------------------------------------------
+    // ImGui related data
+    
+    OverlayCallback _overlayCallback;
+    vk::raii::DescriptorPool _imguiDescriptorPool{nullptr};
+    bool _imguiInitialized{false};
 };

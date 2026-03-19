@@ -24,3 +24,7 @@ Thumbs.db
 
 # Compiled SPIR-V shaders
 *.spv
+
+# ImGui generated (layout, log, etc.)
+imgui.ini
+imgui_log.txt

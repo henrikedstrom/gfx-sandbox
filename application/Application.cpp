@@ -8,6 +8,7 @@
 
 // Third-Party Library Headers
 #include <GLFW/glfw3.h>
+#include <imgui.h>
 #if defined(__EMSCRIPTEN__)
 #include <emscripten/emscripten.h>
 #endif
@@ -252,6 +253,10 @@ void Application::ProcessFrame() {
 }
 
 void Application::OnKeyPressed(int key, [[maybe_unused]] int mods) {
+    if (ImGui::GetCurrentContext() && ImGui::GetIO().WantCaptureKeyboard) {
+        return;
+    }
+
     if (key == GLFW_KEY_ESCAPE) {
         if (_isFullscreen) {
             ToggleFullscreen(); // Exit fullscreen first

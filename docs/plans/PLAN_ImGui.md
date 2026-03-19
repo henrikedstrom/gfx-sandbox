@@ -238,7 +238,7 @@ On backend switch (`SwitchToNextBackend()`), the old renderer is destroyed (clea
 
 - **Backend switch**: Old renderer destructor calls `ShutdownImGui()`. New renderer's `SetOverlayCallback()` triggers `InitImGui()`. ImGui context is fully recreated.
 - **Resize**: ImGui backends handle this automatically -- they query viewport size each frame via `ImGui::GetIO().DisplaySize`.
-- **Emscripten**: `imgui_impl_wgpu.cpp` supports both Dawn and browser WebGPU. `imgui_impl_glfw.cpp` works with Emscripten. For Emscripten builds, also call `ImGui_ImplGlfw_InstallEmscriptenCallbacks()`.
+- **Emscripten**: `imgui_impl_wgpu.cpp` supports both Dawn and browser WebGPU. `imgui_impl_glfw.cpp` works with Emscripten.
 
 ---
 

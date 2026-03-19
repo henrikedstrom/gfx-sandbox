@@ -24,6 +24,9 @@ set(gfx_renderer_webgpu_sources
   ShaderUtils.h
 )
 
+# ImGui WebGPU backend (sources from FetchContent imgui; not under TREE for source_group)
+set(gfx_renderer_webgpu_extra_sources "${GFX_IMGUI_SOURCE_DIR}/backends/imgui_impl_wgpu.cpp")
+
 # Shader files (for IDE visibility, not compiled)
 set(gfx_renderer_webgpu_shaders
   shaders/environment.wgsl
@@ -37,9 +40,10 @@ set(gfx_renderer_webgpu_shaders
 )
 
 source_group(TREE "${CMAKE_CURRENT_LIST_DIR}" FILES ${gfx_renderer_webgpu_sources})
+source_group("ImGui" FILES ${gfx_renderer_webgpu_extra_sources})
 source_group("Shaders" FILES ${gfx_renderer_webgpu_shaders})
 
-add_library(gfx_renderer_webgpu ${gfx_renderer_webgpu_sources} ${gfx_renderer_webgpu_shaders})
+add_library(gfx_renderer_webgpu ${gfx_renderer_webgpu_sources} ${gfx_renderer_webgpu_extra_sources} ${gfx_renderer_webgpu_shaders})
 
 # Mark shaders as non-compiled (header-only) so build system doesn't try to compile them
 set_source_files_properties(${gfx_renderer_webgpu_shaders} PROPERTIES HEADER_FILE_ONLY TRUE)
@@ -48,12 +52,23 @@ target_include_directories(gfx_renderer_webgpu PUBLIC
   ${CMAKE_CURRENT_LIST_DIR}
 )
 
+target_include_directories(gfx_renderer_webgpu PRIVATE
+  ${GFX_IMGUI_SOURCE_DIR}
+  ${GFX_IMGUI_SOURCE_DIR}/backends
+)
+
 target_link_libraries(gfx_renderer_webgpu PUBLIC
   gfx_build_options
   core
   gfx_renderer_core
   glm
+  imgui
 )
+
+# ImGui WebGPU backend: use Dawn on native, browser WebGPU on Emscripten.
+if(NOT EMSCRIPTEN)
+  target_compile_definitions(gfx_renderer_webgpu PRIVATE IMGUI_IMPL_WEBGPU_BACKEND_DAWN)
+endif()
 
 # Emscripten: browser's WebGPU via emdawnwebgpu bindings.
 # Native: Dawn's WebGPU implementation + GLFW for windowing.

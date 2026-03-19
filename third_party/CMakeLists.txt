@@ -81,6 +81,9 @@ target_include_directories(imgui PUBLIC
 target_link_libraries(imgui PUBLIC glfw)
 set_target_properties(imgui PROPERTIES FOLDER "ThirdParty/imgui")
 
+# Expose ImGui source dir for backends that compile imgui_impl_* into their target
+set(GFX_IMGUI_SOURCE_DIR "${imgui_SOURCE_DIR}" CACHE INTERNAL "ImGui source directory")
+
 # ----------------------------------------------------------------------
 # MikkTSpace (tangent space generation, vendored)
 add_subdirectory(mikktspace)
